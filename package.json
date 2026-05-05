@@ -1,0 +1,13 @@
+{
+  "name": "job-queue",
+  "version": "1.0.0",
+  "description": "Minimal distributed job queue — Redis-backed, priority scheduling, exponential backoff, DLQ",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "ioredis": "^5.3.2",
+    "uuid": "^9.0.0"
+  }
+}
