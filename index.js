@@ -8,7 +8,9 @@ const handlers = {
   sendEmail: async ({ to }) => {
     process.stdout.write(`  → email → ${to}\n`);
     await sleep(200);
-    if (Math.random() < 0.4) throw new Error('SMTP timeout');   // 40 % failure rate
+
+    // Simulate failure
+    if (Math.random() < 0.4) throw new Error('SMTP timeout');
   },
 
   resizeImage: async ({ url }) => {
@@ -25,28 +27,48 @@ const handlers = {
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 
 async function main() {
-  const queue  = new Queue();
-  const worker = new Worker(queue, handlers, { concurrency: 3, pollInterval: 300 });
+  const queue = new Queue();
 
-  // Start processing in the background
+  const worker = new Worker(queue, handlers, {
+    concurrency: 3,
+    pollInterval: 300,
+    visibilityTimeout: 5000, // 🔥 NEW (important)
+  });
+
+  // Start processing
   worker.start();
 
-  // Push jobs with different priorities (higher = urgent)
-  //                                           priority ↓
-  await queue.push(new Job({ type: 'sendEmail',       payload: { to: 'alice@example.com' },  priority: 1  }));
-  await queue.push(new Job({ type: 'processPayment',  payload: { amount: 99.99 },            priority: 10 })); // ← goes first
-  await queue.push(new Job({ type: 'resizeImage',     payload: { url: 'banner.png' },        priority: 5  }));
-  await queue.push(new Job({ type: 'sendEmail',       payload: { to: 'bob@example.com' },    priority: 1  }));
-  await queue.push(new Job({ type: 'processPayment',  payload: { amount: 49.00 },            priority: 10 })); // ← goes second
-  await queue.push(new Job({ type: 'unknownJob',      payload: {},                           priority: 3  })); // ← no handler → DLQ
+  console.log('\n🚀 System started (with visibility timeout enabled)\n');
 
-  // After 20 s show queue stats and DLQ contents then exit
+  // ─── Push jobs ────────────────────────────────────────────────────────────
+
+  await queue.push(new Job({ type: 'sendEmail',      payload: { to: 'alice@example.com' }, priority: 1  }));
+  await queue.push(new Job({ type: 'processPayment', payload: { amount: 99.99 },           priority: 10 }));
+  await queue.push(new Job({ type: 'resizeImage',    payload: { url: 'banner.png' },       priority: 5  }));
+  await queue.push(new Job({ type: 'sendEmail',      payload: { to: 'bob@example.com' },   priority: 1  }));
+  await queue.push(new Job({ type: 'processPayment', payload: { amount: 49.00 },           priority: 10 }));
+  await queue.push(new Job({ type: 'unknownJob',     payload: {},                          priority: 3  }));
+
+  // ─── 🔥 OPTIONAL: Simulate worker crash (to prove recovery) ────────────────
+
+  setTimeout(() => {
+    console.log('\n💥 Simulating worker crash...\n');
+    worker.stop();
+  }, 7000);
+
+  setTimeout(() => {
+    console.log('\n♻️ Restarting worker...\n');
+    worker.start();
+  }, 12000);
+
+  // ─── Stats + DLQ ──────────────────────────────────────────────────────────
+
   setTimeout(async () => {
     const stats   = await queue.stats();
     const dlqJobs = await queue.getDLQJobs();
 
     console.log('\n──────────── Stats ────────────');
-    console.log(stats);
+    console.log(stats); // now includes processing
 
     console.log('\n──────────── Dead-Letter Queue ────────────');
     dlqJobs.forEach((j) =>
@@ -56,7 +78,7 @@ async function main() {
     worker.stop();
     await queue.close();
     process.exit(0);
-  }, 20_000);
+  }, 20000);
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
