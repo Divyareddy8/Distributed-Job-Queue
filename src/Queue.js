@@ -3,11 +3,12 @@ const { Job, Status } = require('./Job');
 
 // Redis key constants
 const KEYS = {
-  queue:      'jq:queue',       // sorted set → priority queue
-  delayed:    'jq:delayed',     // sorted set → delayed retries
-  processing: 'jq:processing',  // sorted set → in-flight jobs (visibility timeout)
-  dlq:        'jq:dlq',         // list → dead jobs
+  queue:      'jq:queue',
+  delayed:    'jq:delayed',
+  processing: 'jq:processing',
+  dlq:        'jq:dlq',
   meta:       (id) => `jq:job:${id}`,
+  data:       (id) => `jq:data:${id}`, // 🔥 NEW → store full job safely
 };
 
 class Queue {
@@ -20,8 +21,15 @@ class Queue {
 
   async push(job) {
     const score = -job.priority;
-    await this.redis.zadd(KEYS.queue, score, job.serialize());
+
+    // Store full job data separately
+    await this.redis.set(KEYS.data(job.id), job.serialize());
+
+    // Push only job ID into queue
+    await this.redis.zadd(KEYS.queue, score, job.id);
+
     await this.redis.hset(KEYS.meta(job.id), 'status', Status.PENDING);
+
     console.log(`[Queue] ➕ pushed ${job.id} type=${job.type} priority=${job.priority}`);
     return job;
   }
@@ -32,12 +40,17 @@ class Queue {
     const result = await this.redis.zpopmin(KEYS.queue, 1);
     if (!result || result.length === 0) return null;
 
-    const job = Job.deserialize(result[0]);
+    const jobId = result[0];
+
+    const raw = await this.redis.get(KEYS.data(jobId));
+    if (!raw) return null;
+
+    const job = Job.deserialize(raw);
 
     const timeoutAt = Date.now() + visibilityTimeoutMs;
 
-    // Move to processing set
-    await this.redis.zadd(KEYS.processing, timeoutAt, job.serialize());
+    // Move ONLY jobId into processing set
+    await this.redis.zadd(KEYS.processing, timeoutAt, job.id);
 
     return job;
   }
@@ -45,7 +58,12 @@ class Queue {
   // ─── ACK (remove from processing after success/failure) ─────────────────────
 
   async ack(job) {
-    await this.redis.zrem(KEYS.processing, job.serialize());
+    await this.redis.zrem(KEYS.processing, job.id);
+
+    // Optional: cleanup data after completion
+    if (job.status === Status.COMPLETED || job.status === Status.DEAD) {
+      await this.redis.del(KEYS.data(job.id));
+    }
   }
 
   // ─── STATUS ────────────────────────────────────────────────────────────────
@@ -53,6 +71,9 @@ class Queue {
   async setStatus(job, status) {
     job.status = status;
     await this.redis.hset(KEYS.meta(job.id), 'status', status);
+
+    // Keep updated job state in Redis
+    await this.redis.set(KEYS.data(job.id), job.serialize());
   }
 
   async getStatus(jobId) {
@@ -63,17 +84,25 @@ class Queue {
 
   async requeueWithDelay(job, delayMs) {
     const runAt = Date.now() + delayMs;
-    await this.redis.zadd(KEYS.delayed, runAt, job.serialize());
+
+    await this.redis.set(KEYS.data(job.id), job.serialize());
+    await this.redis.zadd(KEYS.delayed, runAt, job.id);
   }
 
   async promoteDelayed() {
-    const now  = Date.now();
-    const jobs = await this.redis.zrangebyscore(KEYS.delayed, '-inf', now);
+    const now = Date.now();
 
-    for (const raw of jobs) {
-      await this.redis.zrem(KEYS.delayed, raw);
+    const jobIds = await this.redis.zrangebyscore(KEYS.delayed, '-inf', now);
+
+    for (const id of jobIds) {
+      await this.redis.zrem(KEYS.delayed, id);
+
+      const raw = await this.redis.get(KEYS.data(id));
+      if (!raw) continue;
+
       const job = Job.deserialize(raw);
       job.status = Status.PENDING;
+
       await this.push(job);
     }
   }
@@ -83,15 +112,20 @@ class Queue {
   async reclaimStuckJobs() {
     const now = Date.now();
 
-    const jobs = await this.redis.zrangebyscore(KEYS.processing, '-inf', now);
+    const jobIds = await this.redis.zrangebyscore(KEYS.processing, '-inf', now);
 
-    for (const raw of jobs) {
-      await this.redis.zrem(KEYS.processing, raw);
+    for (const id of jobIds) {
+      await this.redis.zrem(KEYS.processing, id);
+
+      const raw = await this.redis.get(KEYS.data(id));
+      if (!raw) continue;
 
       const job = Job.deserialize(raw);
+
       console.log(`[Recovery] ♻️ reclaim ${job.id}`);
 
       job.status = Status.PENDING;
+
       await this.push(job);
     }
   }
@@ -100,8 +134,12 @@ class Queue {
 
   async sendToDLQ(job) {
     await this.setStatus(job, Status.DEAD);
+
     await this.redis.lpush(KEYS.dlq, job.serialize());
+
     console.log(`[DLQ] 💀 buried ${job.id} after ${job.retries} retries`);
+
+    await this.redis.del(KEYS.data(job.id));
   }
 
   async getDLQJobs() {
