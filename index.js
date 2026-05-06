@@ -1,25 +1,28 @@
-const Queue  = require('./src/Queue');
-const Worker = require('./src/Worker');
+'use strict';
+
+const Queue   = require('./src/Queue');
+const Worker  = require('./src/Worker');
 const { Job } = require('./src/Job');
 
-// ─── Handlers (pure async functions — no queue knowledge) ────────────────────
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ─── Handlers ────────────────────────────────────────────────────────────────
+// Pure async functions — no queue knowledge, easily unit-testable.
 
 const handlers = {
-  sendEmail: async ({ to }) => {
-    process.stdout.write(`  → email → ${to}\n`);
+  async sendEmail({ to }) {
+    process.stdout.write(`  → email      → ${to}\n`);
     await sleep(200);
-
-    // Simulate failure
     if (Math.random() < 0.4) throw new Error('SMTP timeout');
   },
 
-  resizeImage: async ({ url }) => {
-    process.stdout.write(`  → resize → ${url}\n`);
+  async resizeImage({ url }) {
+    process.stdout.write(`  → resize     → ${url}\n`);
     await sleep(300);
   },
 
-  processPayment: async ({ amount }) => {
-    process.stdout.write(`  → payment → $${amount}\n`);
+  async processPayment({ amount }) {
+    process.stdout.write(`  → payment    → $${amount}\n`);
     await sleep(150);
   },
 };
@@ -27,60 +30,79 @@ const handlers = {
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 
 async function main() {
-  const queue = new Queue();
-
+  const queue  = new Queue();
   const worker = new Worker(queue, handlers, {
-    concurrency: 3,
-    pollInterval: 300,
-    visibilityTimeout: 5000, // 🔥 NEW (important)
+    concurrency:       3,
+    pollInterval:      300,
+    visibilityTimeout: 5_000,
   });
 
-  // Start processing
+  // ── Connect to Redis BEFORE pushing any jobs ──────────────────────────────
+  await queue.connect();
+
+  // ── Flush stale data from previous runs so stats/DLQ are always fresh ────
+  await queue.flush();
+  console.log('[Queue] 🧹 flushed stale keys\n');
+
+  // ── Graceful shutdown on Ctrl-C / SIGTERM ─────────────────────────────────
+  const shutdown = async (signal) => {
+    console.log(`\n[main] received ${signal} — shutting down…`);
+    await worker.stop();
+    await queue.close();
+    process.exit(0);
+  };
+  process.once('SIGINT',  () => shutdown('SIGINT'));
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+
+  // ── Start worker ──────────────────────────────────────────────────────────
   worker.start();
+  console.log('\n🚀 System started\n');
 
-  console.log('\n🚀 System started (with visibility timeout enabled)\n');
-
-  // ─── Push jobs ────────────────────────────────────────────────────────────
-
+  // ── Push demo jobs ────────────────────────────────────────────────────────
   await queue.push(new Job({ type: 'sendEmail',      payload: { to: 'alice@example.com' }, priority: 1  }));
   await queue.push(new Job({ type: 'processPayment', payload: { amount: 99.99 },           priority: 10 }));
   await queue.push(new Job({ type: 'resizeImage',    payload: { url: 'banner.png' },       priority: 5  }));
   await queue.push(new Job({ type: 'sendEmail',      payload: { to: 'bob@example.com' },   priority: 1  }));
   await queue.push(new Job({ type: 'processPayment', payload: { amount: 49.00 },           priority: 10 }));
-  await queue.push(new Job({ type: 'unknownJob',     payload: {},                          priority: 3  }));
+  await queue.push(new Job({ type: 'unknownJob',     payload: { foo: 'bar' },              priority: 3  }));
 
-  // ─── 🔥 OPTIONAL: Simulate worker crash (to prove recovery) ────────────────
-
+  // ── Simulate crash-and-recovery ───────────────────────────────────────────
   setTimeout(() => {
-    console.log('\n💥 Simulating worker crash...\n');
+    console.log('\n💥 Simulating worker crash…\n');
     worker.stop();
-  }, 7000);
+  }, 7_000);
 
   setTimeout(() => {
-    console.log('\n♻️ Restarting worker...\n');
+    console.log('\n♻️  Restarting worker…\n');
     worker.start();
-  }, 12000);
+  }, 12_000);
 
-  // ─── Stats + DLQ ──────────────────────────────────────────────────────────
-
+  // ── Final stats + clean exit ──────────────────────────────────────────────
   setTimeout(async () => {
-    const stats   = await queue.stats();
-    const dlqJobs = await queue.getDLQJobs();
+    const [stats, dlqJobs] = await Promise.all([
+      queue.stats(),
+      queue.getDLQJobs(),
+    ]);
 
     console.log('\n──────────── Stats ────────────');
-    console.log(stats); // now includes processing
+    console.table(stats);
 
     console.log('\n──────────── Dead-Letter Queue ────────────');
-    dlqJobs.forEach((j) =>
-      console.log(`  id=${j.id}  type=${j.type}  retries=${j.retries}`)
-    );
+    if (dlqJobs.length === 0) {
+      console.log('  (empty)');
+    } else {
+      dlqJobs.forEach((j) =>
+        console.log(`  id=${j.id}  type=${j.type}  retries=${j.retries}`)
+      );
+    }
 
-    worker.stop();
+    await worker.stop();
     await queue.close();
     process.exit(0);
-  }, 20000);
+  }, 20_000);
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-main().catch(console.error);
+main().catch((err) => {
+  console.error('[main] fatal:', err);
+  process.exit(1);
+});
