@@ -1,189 +1,208 @@
-# Distributed Job Queue
+# Distributed Job Queue (Node.js + Redis)
 
-A **production-grade**, Redis-backed distributed job queue built from scratch in Node.js.
+## Overview
 
-Implements the core primitives that underpin systems like BullMQ, Sidekiq, and Celery — priority scheduling, exponential-backoff retries, visibility-timeout crash recovery, and a dead-letter queue — without any job-queue framework dependency.
+This project implements a distributed job queue system using Node.js and Redis. It demonstrates how to build a reliable background processing system with support for concurrency, retries, delayed execution, crash recovery, and dead-letter handling.
 
----
-
-## Features
-
-| Capability | Detail |
-|---|---|
-| **Priority scheduling** | Jobs are stored in a Redis sorted set keyed by `-priority`. Higher priority = dequeued first. |
-| **Concurrent workers** | Configurable concurrency; each job runs in an isolated async fiber. |
-| **Exponential backoff** | Failed jobs retry after `2ⁿ` seconds (capped at 60 s), where `n` = retry count. |
-| **Visibility timeout** | Popped jobs must be ack'd within a deadline; crashed workers auto-recover. |
-| **Dead-letter queue (DLQ)** | Jobs exceeding `maxRetries`, or with no registered handler, are buried in the DLQ for inspection. |
-| **DLQ replay** | Individual dead jobs can be replayed with a single API call. |
-| **Graceful shutdown** | `worker.stop()` drains in-flight jobs before closing; handles `SIGINT`/`SIGTERM`. |
-| **Pipeline writes** | Multi-key Redis mutations use pipelined commands for atomicity and throughput. |
-| **Idempotent push** | Re-pushing a job by id updates its score rather than creating a duplicate. |
+The system is inspired by production-grade tools like Bull and Sidekiq, but implemented from scratch to understand the underlying concepts.
 
 ---
 
 ## Architecture
 
-```
-Producer
-  │
-  │  queue.push(job)
-  ▼
-┌─────────────────────────────────────────────────────────────┐
-│  Redis                                                      │
-│                                                             │
-│  jq:queue       (sorted set, score = -priority)            │
-│  jq:delayed     (sorted set, score = runAt ms)             │
-│  jq:processing  (sorted set, score = visibilityTimeout ms) │
-│  jq:dlq         (list, newest-first)                       │
-│  jq:data:<id>   (string, serialised Job JSON)              │
-│  jq:meta:<id>   (hash, status + type for fast lookup)      │
-└─────────────────────────────────────────────────────────────┘
-  │                │                  │
-  │ popForProcessing│ promoteDelayed   │ reclaimStuckJobs
-  ▼                ▼                  ▼
-Worker ──► handler(payload)
-          │
-          ├── success ──► setStatus(COMPLETED) ──► ack + cleanup
-          │
-          └── failure ──► retries < maxRetries ──► requeueWithDelay
-                      └── retries >= maxRetries ──► sendToDLQ
-```
+The system consists of three main components:
 
-### Key design decisions
+### 1. Job
 
-**Why sorted sets for the queue?**
-`ZPOPMIN` is O(log N) and atomic — perfect for a priority queue with concurrent consumers.
+A Job represents a unit of work. Each job contains:
 
-**Why a separate `jq:processing` set?**
-Tracking in-flight jobs with a timeout score lets a second process (or the same worker after a restart) reclaim jobs whose workers crashed, without any external heartbeat service.
+* Unique ID (UUID)
+* Type (used to select a handler)
+* Payload (input data)
+* Priority
+* Retry metadata
+* Status tracking
 
-**Why pipeline writes?**
-Updating `jq:data` and `jq:meta` in a single pipeline round-trip halves latency on status changes and avoids partial-write inconsistency.
+### 2. Queue
+
+The Queue is responsible for:
+
+* Storing jobs in Redis
+* Managing job states
+* Handling retries and delays
+* Recovering stuck jobs
+* Maintaining a dead-letter queue
+
+### 3. Worker
+
+The Worker:
+
+* Continuously pulls jobs from the queue
+* Executes them using registered handlers
+* Manages concurrency
+* Handles failures and retries
 
 ---
 
-## Quick start
+## Redis Data Structures
 
-### Prerequisites
+| Purpose           | Key           | Type       |
+| ----------------- | ------------- | ---------- |
+| Active Queue      | jq:queue      | Sorted Set |
+| Delayed Jobs      | jq:delayed    | Sorted Set |
+| Processing Jobs   | jq:processing | Sorted Set |
+| Dead Letter Queue | jq:dlq        | List       |
+| Job Data          | jq:data:<id>  | String     |
+| Job Metadata      | jq:meta:<id>  | Hash       |
 
-- Node.js ≥ 18
-- Docker (for Redis) — or a local Redis 6+ install
+---
+
+## Features
+
+* Priority-based job scheduling
+* Configurable concurrency
+* Retry with exponential backoff
+* Delayed job execution
+* Crash recovery using visibility timeout
+* Dead-letter queue for failed jobs
+* Graceful shutdown
+* Idempotent job pushing
+
+---
+
+## Installation
+
+### 1. Clone the repository
 
 ```bash
-# 1. Clone & install
-git clone https://github.com/your-username/distributed-job-queue.git
-cd distributed-job-queue
+git clone <your-repo-url>
+cd Distributed-Job-Queue
+```
+
+### 2. Install dependencies
+
+```bash
 npm install
+```
 
-# 2. Start Redis
+---
+
+## Running Redis (Docker)
+
+You can run Redis without installing it locally using Docker:
+
+```bash
 docker-compose up -d
+```
 
-# 3. Run the demo
+This will start Redis on:
+
+```
+localhost:6379
+```
+
+---
+
+## Running the Project
+
+```bash
 npm start
 ```
 
-### Expected output
+---
 
-```
-[Redis] ✅ connected
-[Queue] 🧹 flushed stale keys
-[Worker] 🚀 started  concurrency=3
+## Example Flow
 
-🚀 System started
+1. Jobs are pushed into the queue
+2. Worker picks jobs based on priority
+3. Jobs are processed concurrently
+4. On failure:
 
-[Queue] ➕ pushed  ...  type=sendEmail       priority=1
-[Queue] ➕ pushed  ...  type=processPayment  priority=10
-...
-[Worker] ⚙️  start  ...  attempt=1
-  → payment → $99.99
-[Worker] ✅ done   ...
-...
-💥 Simulating worker crash…
-[Worker] 🛑 stopped
+   * Job is retried with exponential backoff
+   * If retries exceed limit, it moves to the dead-letter queue
+5. If worker crashes:
 
-♻️  Restarting worker…
-[Worker] 🚀 started  concurrency=3
-...
-──────────── Stats ────────────
-┌─────────────┬───────┐
-│   (index)   │ Values│
-├─────────────┼───────┤
-│   queued    │   0   │
-│   delayed   │   0   │
-│  processing │   0   │
-│    dead     │   1   │
-└─────────────┴───────┘
+   * Jobs are recovered using visibility timeout
 
-──────────── Dead-Letter Queue ────────────
-  id=...  type=unknownJob  retries=0
+---
+
+## Handlers
+
+Handlers define how each job type is processed.
+
+Example:
+
+```js
+const handlers = {
+  async sendEmail({ to }) {
+    // simulate email sending
+  },
+  async processPayment({ amount }) {
+    // simulate payment processing
+  }
+};
 ```
 
 ---
 
-## API reference
+## Job Lifecycle
 
-### `Queue`
-
-```js
-const queue = new Queue(redisConfig?)
-
-await queue.connect()                          // open connection
-await queue.push(job)                          // enqueue
-await queue.popForProcessing(timeoutMs?)       // dequeue + mark in-flight
-await queue.ack(job, cleanup?)                 // remove from processing set
-await queue.setStatus(job, status)             // persist status + updatedAt
-await queue.getStatus(jobId)                   // fast hash lookup
-await queue.requeueWithDelay(job, delayMs)     // schedule retry
-await queue.promoteDelayed()                   // move ready delayed jobs → queue
-await queue.reclaimStuckJobs()                 // re-queue timed-out jobs
-await queue.sendToDLQ(job)                     // bury a dead job
-await queue.getDLQJobs()                       // inspect DLQ
-await queue.replayFromDLQ(jobId)               // retry a dead job
-await queue.stats()                            // { queued, delayed, processing, dead }
-await queue.flush()                            // delete all jq:* keys (tests)
-await queue.close()                            // graceful quit
 ```
-
-### `Worker`
-
-```js
-const worker = new Worker(queue, handlers, options?)
-
-worker.start()    // begin polling
-await worker.stop() // drain in-flight jobs, then stop
-```
-
-**Options**
-
-| Option | Default | Description |
-|---|---|---|
-| `concurrency` | `3` | Max simultaneous jobs |
-| `pollInterval` | `500` ms | Sleep when queue is empty |
-| `visibilityTimeout` | `5000` ms | Max time before a job is reclaimed |
-
-### `Job`
-
-```js
-new Job({
-  type,                  // required — matches a handler key
-  payload,               // required — passed verbatim to the handler
-  priority?,             // default 0  (higher = more urgent)
-  maxRetries?,           // default 3
-})
+PENDING → PROCESSING → COMPLETED
+                    ↘ FAILED → RETRY → DELAYED
+                                   ↘ DEAD (DLQ)
 ```
 
 ---
 
-## Project structure
+## Crash Recovery
+
+If a worker crashes while processing a job:
+
+* The job remains in the processing set
+* After the visibility timeout expires
+* It is automatically moved back to the queue
+
+---
+
+## Dead Letter Queue (DLQ)
+
+Jobs are moved to DLQ when:
+
+* They exceed maximum retry attempts
+* No handler exists for the job type
+
+You can inspect DLQ using:
+
+```js
+queue.getDLQJobs()
+```
+
+---
+
+## Configuration
+
+Worker options:
+
+```js
+const worker = new Worker(queue, handlers, {
+  concurrency: 3,
+  pollInterval: 300,
+  visibilityTimeout: 5000
+});
+```
+
+---
+
+## Project Structure
 
 ```
-distributed-job-queue/
-├── src/
-│   ├── Job.js        — Data model, serialisation, status enum
-│   ├── Queue.js      — Redis operations (producer + consumer primitives)
-│   └── Worker.js     — Polling loop, concurrency control, retry logic
-├── index.js          — Demo script (push jobs, simulate crash, print stats)
+.
+├── src
+│   ├── Job.js
+│   ├── Queue.js
+│   └── Worker.js
+├── index.js
 ├── docker-compose.yml
 ├── package.json
 └── README.md
@@ -191,21 +210,25 @@ distributed-job-queue/
 
 ---
 
-## Running tests
+## Example Output
 
-```bash
-npm test
 ```
-
-Tests use an in-process Redis mock (or a real Redis on a non-default port) and cover:
-- Job serialisation round-trip
-- Priority ordering
-- Retry + backoff
-- DLQ routing
-- Visibility-timeout recovery
+[Worker] started concurrency=3
+[Queue] pushed job ...
+[Worker] start job ...
+[Worker] done job ...
+[Worker] retry job ...
+[DLQ] buried job ...
+```
 
 ---
 
-## License
+## Future Improvements
 
-MIT
+* REST API for job submission
+* Web dashboard for monitoring
+* Multiple worker instances
+* Rate limiting
+* Job grouping and batching
+* Metrics and logging integration
+
