@@ -1,20 +1,88 @@
 version: '3.9'
 
+# ─── Shared environment ──────────────────────────────────────────────────────
+x-redis-env: &redis-env
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  # REDIS_PASSWORD: ${REDIS_PASSWORD}   # uncomment if you set a password
+
+x-worker-base: &worker-base
+  build: .
+  restart: unless-stopped
+  depends_on:
+    redis:
+      condition: service_healthy
+  environment:
+    <<: *redis-env
+
+# ─── Services ────────────────────────────────────────────────────────────────
 services:
+
+  # ── Redis ────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     container_name: jq-redis
     ports:
       - "6379:6379"
-    command: redis-server --save 60 1 --loglevel warning
+    command: >
+      redis-server
+        --save 60 1
+        --loglevel warning
+        --maxmemory 256mb
+        --maxmemory-policy allkeys-lru
     volumes:
       - redis-data:/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:     ["CMD", "redis-cli", "ping"]
       interval: 5s
-      timeout: 3s
-      retries: 5
+      timeout:  3s
+      retries:  5
+
+  # ── REST API + Dashboard ─────────────────────────────────────────────────
+  api:
+    <<: *worker-base
+    container_name: jq-api
+    command: node src/api/server.js
+    ports:
+      - "3000:3000"
+    environment:
+      <<: *redis-env
+      PORT: 3000
+      # Adjust rate limits as JSON; omit to disable rate limiting.
+      RATE_LIMITS: '{"sendEmail":{"max":30,"windowMs":60000},"processPayment":{"max":20,"windowMs":60000}}'
+
+  # ── Worker 1: general purpose (handles all types) ────────────────────────
+  worker-general:
+    <<: *worker-base
+    container_name: jq-worker-general
+    command: node workers/worker.js
+    environment:
+      <<: *redis-env
+      WORKER_ID:          worker-general
+      WORKER_CONCURRENCY: 4
+
+  # ── Worker 2: email specialist ────────────────────────────────────────────
+  worker-email:
+    <<: *worker-base
+    container_name: jq-worker-email
+    command: node workers/worker.js
+    environment:
+      <<: *redis-env
+      WORKER_ID:          worker-email
+      WORKER_TYPES:       sendEmail
+      WORKER_CONCURRENCY: 8     # email I/O-bound — higher concurrency is fine
+
+  # ── Worker 3: payment specialist (low concurrency for safety) ─────────────
+  worker-payment:
+    <<: *worker-base
+    container_name: jq-worker-payment
+    command: node workers/worker.js
+    environment:
+      <<: *redis-env
+      WORKER_ID:          worker-payment
+      WORKER_TYPES:       processPayment
+      WORKER_CONCURRENCY: 2     # payments should be serialised as much as possible
 
 volumes:
   redis-data:

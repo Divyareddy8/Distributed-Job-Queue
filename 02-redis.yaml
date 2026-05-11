@@ -1,0 +1,83 @@
+# ── Redis StatefulSet ────────────────────────────────────────────────────────
+# For production, prefer a managed Redis (ElastiCache, Cloud Memorystore, etc.)
+# or the Redis Operator with replication + Sentinel.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: jq-redis
+  namespace: job-queue
+  labels:
+    app: jq-redis
+spec:
+  serviceName: jq-redis
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jq-redis
+  template:
+    metadata:
+      labels:
+        app: jq-redis
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          command:
+            - redis-server
+            - --save
+            - "60"
+            - "1"
+            - --loglevel
+            - warning
+            - --maxmemory
+            - 512mb
+            - --maxmemory-policy
+            - allkeys-lru
+          resources:
+            requests:
+              cpu:    "100m"
+              memory: "128Mi"
+            limits:
+              cpu:    "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 3
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+
+---
+# ── Redis headless Service (required by StatefulSet) ─────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: jq-redis
+  namespace: job-queue
+  labels:
+    app: jq-redis
+spec:
+  clusterIP: None
+  selector:
+    app: jq-redis
+  ports:
+    - port: 6379
+      targetPort: 6379

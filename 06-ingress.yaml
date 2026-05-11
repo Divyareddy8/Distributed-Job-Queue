@@ -1,0 +1,35 @@
+# ── Ingress ───────────────────────────────────────────────────────────────────
+# Requires an Ingress controller (e.g. nginx):
+#   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
+#
+# For SSE (/api/events) to work through nginx, proxy buffering MUST be off.
+# The annotations below handle that.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jq-ingress
+  namespace: job-queue
+  annotations:
+    # Nginx: disable buffering for SSE endpoint
+    nginx.ingress.kubernetes.io/proxy-buffering:          "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout:       "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout:       "3600"
+    # Optional TLS — uncomment and set cert-manager issuer
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  # tls:
+  #   - hosts:
+  #       - queue.yourdomain.com
+  #     secretName: jq-tls
+  rules:
+    - host: queue.yourdomain.com   # ← replace with your domain
+      http:
+        paths:
+          - path:     /
+            pathType: Prefix
+            backend:
+              service:
+                name: jq-api
+                port:
+                  number: 80

@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Job Queue Dashboard</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0f1117;
+    --surface:  #1a1d27;
+    --border:   #2a2d3a;
+    --text:     #e2e8f0;
+    --muted:    #64748b;
+    --accent:   #6366f1;
+    --green:    #22c55e;
+    --yellow:   #eab308;
+    --red:      #ef4444;
+    --orange:   #f97316;
+    --blue:     #3b82f6;
+    --radius:   10px;
+    --font:     'Inter', system-ui, sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 14px;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  /* ── Layout ────────────────────────────────────────────────────────── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  header h1 { font-size: 18px; font-weight: 700; letter-spacing: -.3px; }
+  header h1 span { color: var(--accent); }
+
+  #conn-dot {
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: var(--muted);
+    display: inline-block;
+    margin-right: 6px;
+    transition: background .3s;
+  }
+  #conn-dot.live { background: var(--green); box-shadow: 0 0 6px var(--green); }
+
+  main { padding: 28px; max-width: 1200px; margin: 0 auto; }
+
+  /* ── Stat cards ─────────────────────────────────────────────────────── */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 22px;
+    position: relative;
+    overflow: hidden;
+  }
+  .card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 3px; height: 100%;
+    background: var(--accent-c, var(--accent));
+    border-radius: 3px 0 0 3px;
+  }
+  .card.queued    { --accent-c: var(--blue);   }
+  .card.delayed   { --accent-c: var(--yellow); }
+  .card.active    { --accent-c: var(--accent); }
+  .card.dead      { --accent-c: var(--red);    }
+
+  .card-label { font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
+  .card-val   { font-size: 38px; font-weight: 800; line-height: 1; margin: 6px 0 0; }
+
+  /* ── Per-type grid ──────────────────────────────────────────────────── */
+  #type-grid {
+    display: flex; flex-wrap: wrap; gap: 10px;
+    margin-bottom: 28px;
+  }
+  .type-pill {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 30px;
+    padding: 5px 14px;
+    font-size: 12px;
+  }
+  .type-pill b { color: var(--accent); margin-left: 4px; }
+
+  /* ── Two-column split ───────────────────────────────────────────────── */
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-bottom: 28px; }
+  @media (max-width: 820px) { .split { grid-template-columns: 1fr; } }
+
+  /* ── Panels ─────────────────────────────────────────────────────────── */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .panel-head {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+    font-size: 13px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .panel-body { padding: 0; max-height: 340px; overflow-y: auto; }
+
+  /* ── Form ───────────────────────────────────────────────────────────── */
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 18px; }
+  .form-grid .full { grid-column: 1 / -1; }
+  label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; letter-spacing: .5px; }
+  input, select, textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    padding: 8px 10px;
+    font-size: 13px;
+    font-family: var(--font);
+    transition: border-color .2s;
+  }
+  input:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  textarea { resize: vertical; min-height: 80px; }
+
+  .btn {
+    padding: 9px 18px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity .15s, transform .1s;
+  }
+  .btn:active { transform: scale(.97); }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { opacity: .88; }
+  .btn-danger  { background: var(--red); color: #fff; font-size: 11px; padding: 4px 10px; }
+  .btn-danger:hover { opacity: .88; }
+  .btn-sm      { background: #2a2d3a; color: var(--text); font-size: 11px; padding: 4px 10px; }
+
+  #submit-result {
+    padding: 0 18px 14px;
+    font-size: 12px;
+    color: var(--green);
+    min-height: 22px;
+  }
+  #submit-result.err { color: var(--red); }
+
+  /* ── Table ─────────────────────────────────────────────────────────── */
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    text-align: left;
+    padding: 10px 14px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    position: sticky; top: 0;
+  }
+  td { padding: 9px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(99,102,241,.05); }
+
+  /* ── Badges ────────────────────────────────────────────────────────── */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .4px;
+    text-transform: uppercase;
+  }
+  .badge-pending    { background: rgba(59,130,246,.15);  color: var(--blue);   }
+  .badge-processing { background: rgba(99,102,241,.15);  color: var(--accent); }
+  .badge-completed  { background: rgba(34,197,94,.15);   color: var(--green);  }
+  .badge-failed     { background: rgba(234,179,8,.15);   color: var(--yellow); }
+  .badge-dead       { background: rgba(239,68,68,.15);   color: var(--red);    }
+
+  .id-cell { font-family: monospace; font-size: 11px; color: var(--muted); }
+  .empty-row td { text-align: center; color: var(--muted); padding: 26px; }
+
+  /* ── Scrollbar ──────────────────────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ <span>Job Queue</span> Dashboard</h1>
+  <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)">
+    <span id="conn-dot"></span>
+    <span id="conn-label">Connecting…</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- Stat cards -->
+  <div class="cards">
+    <div class="card queued">
+      <div class="card-label">Queued</div>
+      <div class="card-val" id="s-queued">—</div>
+    </div>
+    <div class="card delayed">
+      <div class="card-label">Delayed</div>
+      <div class="card-val" id="s-delayed">—</div>
+    </div>
+    <div class="card active">
+      <div class="card-label">Processing</div>
+      <div class="card-val" id="s-processing">—</div>
+    </div>
+    <div class="card dead">
+      <div class="card-label">Dead (DLQ)</div>
+      <div class="card-val" id="s-dead">—</div>
+    </div>
+  </div>
+
+  <!-- Per-type pills -->
+  <div id="type-grid"></div>
+
+  <!-- Submit + Recent jobs -->
+  <div class="split">
+
+    <!-- Submit form -->
+    <div class="panel">
+      <div class="panel-head">Submit Job</div>
+      <div class="form-grid">
+        <div>
+          <label>TYPE</label>
+          <select id="f-type">
+            <option value="sendEmail">sendEmail</option>
+            <option value="resizeImage">resizeImage</option>
+            <option value="processPayment">processPayment</option>
+            <option value="generateReport">generateReport</option>
+            <option value="custom">custom…</option>
+          </select>
+        </div>
+        <div>
+          <label>PRIORITY (0–10)</label>
+          <input id="f-priority" type="number" value="0" min="0" max="10" />
+        </div>
+        <div>
+          <label>MAX RETRIES</label>
+          <input id="f-retries" type="number" value="3" min="0" max="10" />
+        </div>
+        <div>
+          <label>CUSTOM TYPE</label>
+          <input id="f-custom-type" placeholder="myJobType" disabled />
+        </div>
+        <div class="full">
+          <label>PAYLOAD (JSON)</label>
+          <textarea id="f-payload">{"to":"user@example.com"}</textarea>
+        </div>
+        <div class="full">
+          <button class="btn btn-primary" onclick="submitJob()">Submit →</button>
+        </div>
+      </div>
+      <div id="submit-result"></div>
+    </div>
+
+    <!-- Recent jobs -->
+    <div class="panel">
+      <div class="panel-head">
+        Recent Jobs
+        <button class="btn btn-sm" onclick="loadRecent()">Refresh</button>
+      </div>
+      <div class="panel-body">
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Type</th><th>Status</th><th>Pri</th></tr>
+          </thead>
+          <tbody id="recent-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- DLQ -->
+  <div class="panel">
+    <div class="panel-head">
+      Dead-Letter Queue
+      <button class="btn btn-danger" onclick="purgeDLQ()">Purge All</button>
+    </div>
+    <div class="panel-body">
+      <table>
+        <thead>
+          <tr><th>ID</th><th>Type</th><th>Retries</th><th>Failed At</th><th></th></tr>
+        </thead>
+        <tbody id="dlq-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+</main>
+
+<script>
+  const API = '';   // same-origin; change to 'http://localhost:3000' for dev
+
+  // ── SSE connection ─────────────────────────────────────────────────────
+  function connect() {
+    const es = new EventSource(`${API}/api/events`);
+    const dot   = document.getElementById('conn-dot');
+    const label = document.getElementById('conn-label');
+
+    es.addEventListener('stats', (e) => {
+      const s = JSON.parse(e.data);
+      document.getElementById('s-queued').textContent     = s.queued     ?? 0;
+      document.getElementById('s-delayed').textContent    = s.delayed    ?? 0;
+      document.getElementById('s-processing').textContent = s.processing ?? 0;
+      document.getElementById('s-dead').textContent       = s.dead       ?? 0;
+
+      const grid = document.getElementById('type-grid');
+      grid.innerHTML = '';
+      for (const [type, count] of Object.entries(s.byType ?? {})) {
+        const pill = document.createElement('div');
+        pill.className = 'type-pill';
+        pill.innerHTML = `${type}<b>${count}</b>`;
+        grid.appendChild(pill);
+      }
+    });
+
+    es.onopen = () => {
+      dot.className = 'live';
+      label.textContent = 'Live';
+      loadRecent();
+      loadDLQ();
+    };
+    es.onerror = () => {
+      dot.className = '';
+      label.textContent = 'Reconnecting…';
+    };
+  }
+
+  // ── Custom type toggle ─────────────────────────────────────────────────
+  document.getElementById('f-type').addEventListener('change', (e) => {
+    document.getElementById('f-custom-type').disabled = e.target.value !== 'custom';
+  });
+
+  // ── Submit ─────────────────────────────────────────────────────────────
+  async function submitJob() {
+    const resultEl = document.getElementById('submit-result');
+    resultEl.className = '';
+    resultEl.textContent = '';
+
+    const typeEl  = document.getElementById('f-type');
+    const type    = typeEl.value === 'custom'
+      ? document.getElementById('f-custom-type').value.trim()
+      : typeEl.value;
+
+    if (!type) { resultEl.className = 'err'; resultEl.textContent = 'Type is required.'; return; }
+
+    let payload;
+    try { payload = JSON.parse(document.getElementById('f-payload').value); }
+    catch { resultEl.className = 'err'; resultEl.textContent = 'Payload must be valid JSON.'; return; }
+
+    const body = {
+      type,
+      payload,
+      priority:   parseInt(document.getElementById('f-priority').value, 10),
+      maxRetries: parseInt(document.getElementById('f-retries').value,  10),
+    };
+
+    try {
+      const res = await fetch(`${API}/api/jobs`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body),
+      });
+      const json = await res.json();
+
+      if (!res.ok) {
+        resultEl.className   = 'err';
+        resultEl.textContent = json.error ?? `Error ${res.status}`;
+        if (res.status === 429) {
+          resultEl.textContent += ` (retry in ${Math.ceil(json.resetAfterMs / 1000)}s)`;
+        }
+        return;
+      }
+
+      resultEl.textContent = `✓ Submitted  id=${json.id}`;
+      loadRecent();
+    } catch (err) {
+      resultEl.className = 'err';
+      resultEl.textContent = `Network error: ${err.message}`;
+    }
+  }
+
+  // ── Recent jobs ─────────────────────────────────────────────────────────
+  async function loadRecent() {
+    const tbody = document.getElementById('recent-body');
+    try {
+      const res  = await fetch(`${API}/api/jobs/recent?limit=30`);
+      const jobs = await res.json();
+      tbody.innerHTML = '';
+
+      if (!jobs.length) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="4">No jobs yet</td></tr>';
+        return;
+      }
+
+      for (const j of jobs) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="id-cell">${j.id.slice(0,8)}…</td>
+          <td>${j.type}</td>
+          <td><span class="badge badge-${j.status}">${j.status}</span></td>
+          <td>${j.priority ?? '—'}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+    } catch { /* ignore */ }
+  }
+
+  // ── DLQ ─────────────────────────────────────────────────────────────────
+  async function loadDLQ() {
+    const tbody = document.getElementById('dlq-body');
+    try {
+      const res  = await fetch(`${API}/api/jobs/dlq/list`);
+      const jobs = await res.json();
+      tbody.innerHTML = '';
+
+      if (!jobs.length) {
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="5">DLQ is empty 🎉</td></tr>';
+        return;
+      }
+
+      for (const j of jobs) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="id-cell">${j.id.slice(0,8)}…</td>
+          <td>${j.type}</td>
+          <td>${j.retries}</td>
+          <td>${j.updatedAt ? new Date(j.updatedAt).toLocaleTimeString() : '—'}</td>
+          <td>
+            <button class="btn btn-sm" onclick="replayJob('${j.id}')">Replay</button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      }
+    } catch { /* ignore */ }
+  }
+
+  async function replayJob(id) {
+    await fetch(`${API}/api/jobs/dlq/${id}/replay`, { method: 'POST' });
+    loadDLQ();
+    loadRecent();
+  }
+
+  async function purgeDLQ() {
+    if (!confirm('Purge all DLQ entries?')) return;
+    await fetch(`${API}/api/jobs/dlq/purge`, { method: 'DELETE' });
+    loadDLQ();
+  }
+
+  // Refresh recent + DLQ every 5 s independently of SSE
+  setInterval(() => { loadRecent(); loadDLQ(); }, 5_000);
+
+  connect();
+</script>
+</body>
+</html>

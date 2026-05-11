@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jq-config
+  namespace: job-queue
+data:
+  REDIS_HOST: "jq-redis"
+  REDIS_PORT: "6379"
+  PORT:       "3000"
+  RATE_LIMITS: '{"sendEmail":{"max":30,"windowMs":60000},"processPayment":{"max":20,"windowMs":60000}}'
+
+---
+# Store REDIS_PASSWORD in a Secret — never in a ConfigMap.
+# kubectl create secret generic jq-redis-secret \
+#   --from-literal=REDIS_PASSWORD=<your-password> \
+#   -n job-queue
+apiVersion: v1
+kind: Secret
+metadata:
+  name: jq-redis-secret
+  namespace: job-queue
+type: Opaque
+stringData:
+  REDIS_PASSWORD: ""   # replace with actual password or mount from external secrets manager

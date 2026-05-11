@@ -1,0 +1,81 @@
+# ── API Deployment ────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jq-api
+  namespace: job-queue
+  labels:
+    app: jq-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: jq-api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge:       1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: jq-api
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: api
+          image: YOUR_REGISTRY/distributed-job-queue:latest   # ← replace
+          imagePullPolicy: Always
+          command: ["node", "src/api/server.js"]
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: jq-config
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: jq-redis-secret
+                  key:  REDIS_PASSWORD
+          resources:
+            requests:
+              cpu:    "100m"
+              memory: "128Mi"
+            limits:
+              cpu:    "500m"
+              memory: "256Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          lifecycle:
+            preStop:
+              exec:
+                # Give the load balancer time to drain before the process exits
+                command: ["/bin/sh", "-c", "sleep 5"]
+
+---
+# ── API Service ───────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: jq-api
+  namespace: job-queue
+  labels:
+    app: jq-api
+spec:
+  selector:
+    app: jq-api
+  ports:
+    - port:       80
+      targetPort: 3000
+      protocol:   TCP

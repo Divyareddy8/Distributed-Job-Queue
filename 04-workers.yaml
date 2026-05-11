@@ -1,0 +1,163 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Worker Deployments
+#
+# Three worker roles, each tuned for its workload.
+# Scale with:  kubectl scale deployment <name> --replicas=N -n job-queue
+# Or let the HPA in 05-hpa.yaml do it automatically.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── General-purpose worker (handles any job type) ─────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jq-worker-general
+  namespace: job-queue
+  labels:
+    app:  jq-worker
+    role: general
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app:  jq-worker
+      role: general
+  template:
+    metadata:
+      labels:
+        app:  jq-worker
+        role: general
+    spec:
+      terminationGracePeriodSeconds: 60   # allow in-flight jobs to drain
+      containers:
+        - name: worker
+          image: YOUR_REGISTRY/distributed-job-queue:latest   # ← replace
+          imagePullPolicy: Always
+          command: ["node", "workers/worker.js"]
+          envFrom:
+            - configMapRef:
+                name: jq-config
+          env:
+            - name: WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name   # pod name → unique worker ID
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: jq-redis-secret
+                  key:  REDIS_PASSWORD
+            - name: WORKER_CONCURRENCY
+              value: "4"
+          resources:
+            requests:
+              cpu:    "100m"
+              memory: "128Mi"
+            limits:
+              cpu:    "500m"
+              memory: "256Mi"
+
+---
+# ── Email worker (high concurrency — I/O-bound) ───────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jq-worker-email
+  namespace: job-queue
+  labels:
+    app:  jq-worker
+    role: email
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app:  jq-worker
+      role: email
+  template:
+    metadata:
+      labels:
+        app:  jq-worker
+        role: email
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: worker
+          image: YOUR_REGISTRY/distributed-job-queue:latest
+          imagePullPolicy: Always
+          command: ["node", "workers/worker.js"]
+          envFrom:
+            - configMapRef:
+                name: jq-config
+          env:
+            - name: WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: jq-redis-secret
+                  key:  REDIS_PASSWORD
+            - name: WORKER_TYPES
+              value: "sendEmail"
+            - name: WORKER_CONCURRENCY
+              value: "10"
+          resources:
+            requests:
+              cpu:    "100m"
+              memory: "128Mi"
+            limits:
+              cpu:    "300m"
+              memory: "256Mi"
+
+---
+# ── Payment worker (low concurrency — safety + compliance) ───────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jq-worker-payment
+  namespace: job-queue
+  labels:
+    app:  jq-worker
+    role: payment
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app:  jq-worker
+      role: payment
+  template:
+    metadata:
+      labels:
+        app:  jq-worker
+        role: payment
+    spec:
+      terminationGracePeriodSeconds: 90   # payments need more drain time
+      containers:
+        - name: worker
+          image: YOUR_REGISTRY/distributed-job-queue:latest
+          imagePullPolicy: Always
+          command: ["node", "workers/worker.js"]
+          envFrom:
+            - configMapRef:
+                name: jq-config
+          env:
+            - name: WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: jq-redis-secret
+                  key:  REDIS_PASSWORD
+            - name: WORKER_TYPES
+              value: "processPayment"
+            - name: WORKER_CONCURRENCY
+              value: "2"
+          resources:
+            requests:
+              cpu:    "100m"
+              memory: "128Mi"
+            limits:
+              cpu:    "500m"
+              memory: "256Mi"

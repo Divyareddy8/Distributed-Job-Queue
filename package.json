@@ -1,34 +1,36 @@
 {
   "name": "distributed-job-queue",
   "version": "2.0.0",
-  "description": "Production-grade distributed job queue with Redis, priority scheduling, retry backoff, DLQ, and visibility-timeout recovery",
+  "description": "Distributed priority job queue — REST API, live dashboard, multi-worker, Kubernetes-ready",
   "main": "index.js",
   "scripts": {
-    "start":   "node index.js",
-    "dev":     "node --watch index.js",
-    "test":    "jest --runInBand --forceExit",
-    "lint":    "eslint src/ index.js"
+    "start":           "node index.js",
+    "api":             "node src/api/server.js",
+    "worker":          "node workers/worker.js",
+    "worker:email":    "WORKER_TYPES=sendEmail WORKER_ID=email-worker node workers/worker.js",
+    "worker:payment":  "WORKER_TYPES=processPayment WORKER_ID=pay-worker node workers/worker.js",
+    "worker:images":   "WORKER_TYPES=resizeImage WORKER_ID=img-worker node workers/worker.js",
+    "dev:api":         "nodemon src/api/server.js",
+    "dev:worker":      "nodemon workers/worker.js",
+    "docker:up":       "docker-compose up --build -d",
+    "docker:down":     "docker-compose down -v",
+    "docker:logs":     "docker-compose logs -f",
+    "k8s:apply":       "kubectl apply -f k8s/",
+    "k8s:delete":      "kubectl delete -f k8s/",
+    "k8s:status":      "kubectl get all -n job-queue"
   },
-  "keywords": [
-    "job-queue",
-    "redis",
-    "distributed",
-    "worker",
-    "retry",
-    "dead-letter-queue",
-    "priority-queue",
-    "visibility-timeout"
-  ],
-  "author": "",
-  "license": "MIT",
   "dependencies": {
+    "cors":    "^2.8.5",
+    "express": "^4.19.2",
     "ioredis": "^5.3.2",
-    "uuid":    "^9.0.0"
+    "uuid":    "^9.0.1"
   },
   "devDependencies": {
-    "jest":    "^29.0.0"
+    "nodemon":   "^3.1.0",
+    "jest":      "^29.7.0",
+    "supertest": "^7.0.0"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=18"
   }
 }
