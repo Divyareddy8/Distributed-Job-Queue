@@ -1,15 +1,12 @@
 'use strict';
 
 const express = require('express');
+const router  = express.Router();
 
-/** Stats route — mounted at /api/stats */
-module.exports = function statsRoute(queue) {
-  const router = express.Router();
+// GET /api/stats
+router.get('/', async (req, res) => {
+  const stats = await req.queue.stats();
+  return res.json(stats);
+});
 
-  router.get('/', async (_req, res) => {
-    const s = await queue.stats();
-    res.json(s);
-  });
-
-  return router;
-};
+module.exports = router;

@@ -352,11 +352,16 @@ svg.ring{transform:rotate(-90deg)}
   <!-- ── PAGE: Overview ─────────────────────────────────────────────── -->
   <div class="page active" id="page-overview">
     <!-- Stat cards -->
-    <div class="stat-row">
+    <div class="stat-row" style="grid-template-columns:repeat(5,1fr)">
+      <div class="stat-card c-green">
+        <div class="sc-label">Completed</div>
+        <div class="sc-val" id="s-completed">—</div>
+        <div class="sc-delta">all-time total</div>
+      </div>
       <div class="stat-card c-blue">
         <div class="sc-label">Queued</div>
         <div class="sc-val" id="s-queued">—</div>
-        <div class="sc-delta" id="sd-queued">waiting for data</div>
+        <div class="sc-delta" id="sd-queued">pending jobs</div>
       </div>
       <div class="stat-card c-yellow">
         <div class="sc-label">Delayed</div>
@@ -386,8 +391,10 @@ svg.ring{transform:rotate(-90deg)}
       <div class="panel">
         <div class="ph"><h3>Queued History</h3><span class="ph-meta">last 20 ticks</span></div>
         <div id="throughput-chart"></div>
-        <div style="padding:4px 18px 12px;font-size:10px;color:var(--muted)">
-          Each bar = one SSE tick (~1.5 s)
+        <div style="padding:4px 18px 12px;font-size:10px;color:var(--muted);display:flex;gap:14px;align-items:center">
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--accent);margin-right:4px;vertical-align:middle"></span>processing</span>
+          <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:var(--blue);margin-right:4px;vertical-align:middle"></span>queued</span>
+          <span style="margin-left:auto">each bar ≈ 1.5 s</span>
         </div>
       </div>
     </div>
@@ -615,40 +622,52 @@ function switchPage(el){
 }
 
 // ── SSE ────────────────────────────────────────────────────────────────
-let prevQueued = null;
-const history20 = [];
+
+// Map of event → human-readable label for the feed
+const JOB_EVENT_LABELS = {
+  'job:queued':     { icon:'➕', cls:'info', label:'Queued'     },
+  'job:processing': { icon:'⚙️', cls:'info', label:'Processing' },
+  'job:completed':  { icon:'✅', cls:'ok',   label:'Completed'  },
+  'job:failed':     { icon:'❌', cls:'err',  label:'Failed'     },
+  'job:dead':       { icon:'💀', cls:'err',  label:'Dead (DLQ)' },
+  'job:cancelled':  { icon:'🚫', cls:'warn', label:'Cancelled'  },
+};
 
 function connect(){
   const es    = new EventSource(`${API}/api/events`);
   const dot   = document.getElementById('conn-dot');
   const label = document.getElementById('conn-label');
 
+  // Stats tick — update counters + chart
   es.addEventListener('stats', e => {
     const s = JSON.parse(e.data);
     updateCards(s);
     updateTypePills(s.byType||{});
-    updateChart(s.queued||0);
+    updateChart(s.queued||0, s.processing||0);
     updateRing(s.processing||0, 20);
   });
+
+  // FIX: listen for individual job-status events so the Jobs table and
+  // activity feed update the moment a worker changes a job's status.
+  es.addEventListener('job', e => {
+    const { event, job } = JSON.parse(e.data);
+    const def = JOB_EVENT_LABELS[event] || { icon:'•', cls:'info', label: event };
+    if (job && job.id) {
+      addFeed(def.icon, def.cls, `${def.label}: ${job.type||''}`,
+              `id=${job.id.slice(0,8)}…`);
+    }
+    // If the Jobs page is visible, refresh the table immediately
+    const active = document.querySelector('.page.active');
+    if (active?.id === 'page-jobs') loadRecent();
+  });
+
   es.onopen  = ()=>{ dot.className='live'; label.textContent='Live'; };
   es.onerror = ()=>{ dot.className='err';  label.textContent='Reconnecting…'; };
 }
 
 // ── Stat cards ─────────────────────────────────────────────────────────
 function updateCards(s){
-  const set = (id, val, delta) => {
-    const el = document.getElementById(id);
-    el.textContent = val;
-  };
-  const dEl = document.getElementById('sd-queued');
-  if(prevQueued !== null){
-    const diff = (s.queued||0) - prevQueued;
-    dEl.textContent = diff > 0 ? `▲ +${diff} since last tick`
-                    : diff < 0 ? `▼ ${diff} since last tick`
-                    : '— no change';
-    dEl.style.color = diff > 0 ? 'var(--yellow)' : diff < 0 ? 'var(--green)' : 'var(--muted)';
-  }
-  prevQueued = s.queued||0;
+  document.getElementById('s-completed').textContent  = s.completed  ?? 0;
   document.getElementById('s-queued').textContent     = s.queued     ?? 0;
   document.getElementById('s-delayed').textContent    = s.delayed    ?? 0;
   document.getElementById('s-processing').textContent = s.processing ?? 0;
@@ -673,20 +692,36 @@ function updateTypePills(byType){
 }
 
 // ── Bar chart ──────────────────────────────────────────────────────────
-function updateChart(val){
-  history20.push(val);
-  if(history20.length > 20) history20.shift();
-  const max = Math.max(...history20, 1);
+const history20q = [];   // queued
+const history20p = [];   // processing
+
+function updateChart(queued, processing){
+  history20q.push(queued    ?? 0);
+  history20p.push(processing ?? 0);
+  if(history20q.length > 20) history20q.shift();
+  if(history20p.length > 20) history20p.shift();
+  const maxQ = Math.max(...history20q, 1);
+  const maxP = Math.max(...history20p, 1);
+  const maxV  = Math.max(maxQ, maxP, 1);
   const wrap = document.getElementById('throughput-chart');
   wrap.innerHTML = '';
-  history20.forEach((v,i)=>{
+  const len = history20q.length;
+  for(let i=0;i<len;i++){
+    const q = history20q[i];
+    const p = history20p[i];
     const bw = document.createElement('div');
     bw.className='bar-wrap';
-    const pct = Math.round((v/max)*80)+5;
-    bw.innerHTML=`<div class="bar" style="height:${pct}px;opacity:${.4+.6*(i/history20.length)}"></div>
-                  <div class="bar-lbl">${v}</div>`;
+    const qh = Math.round((q/maxV)*75)+3;
+    const ph = Math.round((p/maxV)*75)+3;
+    const opacity = 0.35 + 0.65*(i/len);
+    bw.innerHTML=`
+      <div style="display:flex;flex-direction:column;align-items:center;gap:1px;width:100%">
+        <div class="bar" title="processing:${p}" style="height:${ph}px;opacity:${opacity};background:var(--accent)"></div>
+        <div class="bar" title="queued:${q}"     style="height:${qh}px;opacity:${opacity};background:var(--blue)"></div>
+      </div>
+      <div class="bar-lbl">${q+p}</div>`;
     wrap.appendChild(bw);
-  });
+  }
 }
 
 // ── Ring ───────────────────────────────────────────────────────────────
@@ -847,6 +882,11 @@ async function submitJob(){
       showResult('ok', `✓ Submitted  id=${json.id}`);
       toast('ok', `Job submitted: ${json.type}`);
       addFeed('➕','ok',`Submitted ${json.type}`,`id=${json.id.slice(0,8)}… pri=${json.priority}`);
+      // Fire several rapid fetches to catch the brief "queued → processing" window
+      fetchAndUpdateStats();
+      setTimeout(fetchAndUpdateStats, 80);
+      setTimeout(fetchAndUpdateStats, 200);
+      setTimeout(fetchAndUpdateStats, 400);
     }
   }catch(e){ showResult('err',`Network error: ${e.message}`); }
 }
@@ -891,22 +931,39 @@ function toast(cls, msg){
 
 // ── Manual refresh ──────────────────────────────────────────────────────
 async function manualRefresh(){
-  const r = await fetch(`${API}/api/stats`);
-  const s = await r.json();
-  updateCards(s);
-  updateTypePills(s.byType||{});
-  updateChart(s.queued||0);
-  updateRing(s.processing||0,20);
+  await fetchAndUpdateStats();
   toast('info','Stats refreshed');
+}
+
+// ── Stats fetch helper — used on boot, after submit, and as SSE fallback ──
+async function fetchAndUpdateStats(){
+  try{
+    const r = await fetch(`${API}/api/stats`);
+    if(!r.ok) return;
+    const s = await r.json();
+    updateCards(s);
+    updateTypePills(s.byType||{});
+    updateChart(s.queued||0, s.processing||0);
+    updateRing(s.processing||0, 20);
+  }catch(e){ /* silently ignore — SSE will catch up */ }
 }
 
 // ── Boot ────────────────────────────────────────────────────────────────
 connect();
+
+// Fetch stats immediately on load so cards never stay stuck at "—"
+fetchAndUpdateStats();
+
+// Poll every 200 ms — jobs process in ~200–800 ms; 200 ms catches the
+// "queued > 0" window reliably without hammering the server noticeably.
+setInterval(fetchAndUpdateStats, 200);
+
+// Keep the jobs/DLQ tables fresh (3 s is fine for tables)
 setInterval(()=>{
   const active=document.querySelector('.page.active');
   if(active?.id==='page-jobs') loadRecent();
   if(active?.id==='page-dlq')  loadDLQ();
-},6000);
+},3000);
 
 // Seed the feed
 addFeed('🚀','info','Dashboard initialised','connecting to SSE stream…');

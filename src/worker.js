@@ -7,21 +7,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 /**
  * Worker — pulls jobs from the Queue, dispatches to registered handlers,
  * and manages retries, backoff, and dead-letter routing.
- *
- * New in v2:
- *  • `types`    — subscribe to a subset of job types (null = all)
- *  • `workerId` — human-readable label for logs (defaults to PID)
  */
 class Worker {
   /**
    * @param {import('./Queue')} queue
    * @param {Record<string, (payload: any) => Promise<void>>} handlers
-   * @param {object}   [opts]
-   * @param {number}   [opts.concurrency=3]
-   * @param {number}   [opts.pollInterval=500]       ms to wait when queue is empty
-   * @param {number}   [opts.visibilityTimeout=5000] ms before a stuck job is reclaimed
-   * @param {string[]|null} [opts.types=null]        job types this worker handles
-   * @param {string}   [opts.workerId]               label for logs
+   * @param {object}        [opts]
+   * @param {number}        [opts.concurrency=3]
+   * @param {number}        [opts.pollInterval=500]       ms to wait when queue is empty
+   * @param {number}        [opts.visibilityTimeout=5000] ms before a stuck job is reclaimed
+   * @param {string[]|null} [opts.types=null]             job types this worker handles
+   * @param {string}        [opts.workerId]               label for logs
+   * @param {Function}      [opts.onJobEvent]             optional callback(event, job)
+   *                                                      called after every status change;
+   *                                                      used by server.js to broadcast SSE.
    */
   constructor(queue, handlers, opts = {}) {
     this.queue             = queue;
@@ -31,17 +30,26 @@ class Worker {
     this.visibilityTimeout = opts.visibilityTimeout ?? 5_000;
     this.types             = opts.types             ?? null;
     this.workerId          = opts.workerId          ?? `w-${process.pid}`;
+    // FIX: callback so the API server can broadcast SSE job-status events
+    this.onJobEvent        = opts.onJobEvent        ?? null;
 
     this._running      = false;
     this._active       = 0;
     this._resolveDrain = null;
   }
 
-  // ─── Backoff ──────────────────────────────────────────────────────────────
+  // ─── Helpers ──────────────────────────────────────────────────────────────
 
   /** Exponential backoff: 2^retries seconds, capped at 60 s. */
   _backoffMs(retries) {
     return Math.min(Math.pow(2, retries) * 1_000, 60_000);
+  }
+
+  /** Notify the SSE broadcaster (if wired up). */
+  _emit(event, job) {
+    if (this.onJobEvent) {
+      try { this.onJobEvent(event, job); } catch { /* never crash the worker */ }
+    }
   }
 
   // ─── Job execution ────────────────────────────────────────────────────────
@@ -54,18 +62,23 @@ class Worker {
       console.warn(`${id} ⚠️  no handler for type="${job.type}" — sending to DLQ`);
       await this.queue.ack(job);
       await this.queue.sendToDLQ(job);
+      this._emit('job:dead', job);
       return;
     }
 
     await this.queue.setStatus(job, Status.PROCESSING);
+    this._emit('job:processing', job);
     console.log(`${id} ⚙️  start  ${job.id}  type=${job.type}  attempt=${job.retries + 1}`);
 
     try {
       await handler(job.payload);
 
-      // Persist COMPLETED first, then remove from processing set.
+      // FIX: setStatus(COMPLETED) writes the completed state to Redis,
+      // then ack() ONLY removes from the processing set (no data deletion).
       await this.queue.setStatus(job, Status.COMPLETED);
-      await this.queue.ack(job, /* cleanup= */ true);
+      await this.queue.ack(job);           // ← no cleanup=true anymore
+      await this.queue.incrementCounter('completed');
+      this._emit('job:completed', job);
       console.log(`${id} ✅ done   ${job.id}`);
 
     } catch (err) {
@@ -76,9 +89,12 @@ class Worker {
 
       if (job.retries > job.maxRetries) {
         await this.queue.sendToDLQ(job);
+        await this.queue.incrementCounter('failed');
+        this._emit('job:dead', job);
       } else {
         const delay = this._backoffMs(job.retries);
         await this.queue.setStatus(job, Status.FAILED);
+        this._emit('job:failed', job);
         console.log(`${id} 🔁 retry  ${job.id}  in ${delay / 1_000}s`);
         await this.queue.requeueWithDelay(job, delay);
       }
@@ -87,7 +103,6 @@ class Worker {
 
   // ─── Main loop ────────────────────────────────────────────────────────────
 
-  /** Start processing.  Idempotent — safe to call on an already-running worker. */
   start() {
     if (this._running) {
       console.warn(`[${this.workerId}] already running — ignoring start()`);
@@ -134,15 +149,11 @@ class Worker {
           await sleep(this.pollInterval);
         }
       } else {
-        await sleep(50);   // busy-wait until a slot opens
+        await sleep(50);
       }
     }
   }
 
-  /**
-   * Signal the loop to stop and wait for in-flight jobs to finish.
-   * @returns {Promise<void>}
-   */
   async stop() {
     if (!this._running) return;
 
