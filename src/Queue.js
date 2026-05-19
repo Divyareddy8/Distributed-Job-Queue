@@ -150,9 +150,14 @@ class Queue {
 
     const job       = Job.deserialize(raw);
     const timeoutAt = Date.now() + visibilityTimeoutMs;
+    job.status = Status.PROCESSING;
+    job.touch();
+
     await this.redis
       .pipeline()
       .zadd(KEYS.processing, timeoutAt, job.id)
+      .hset(KEYS.meta(job.id), 'status', Status.PROCESSING)
+      .set(KEYS.data(job.id), job.serialize())
       .exec();
 
     return job;
@@ -160,15 +165,13 @@ class Queue {
 
   // ─── Ack ──────────────────────────────────────────────────────────────────
 
-  /**
-   * FIX: Do NOT delete jq:data on completion — we need it so getRecentJobs
-   * can still display completed jobs in the dashboard.
-   * We only delete data+meta when a job goes to the DLQ (sendToDLQ handles that).
-   * The `cleanup` parameter is now ignored — kept for API compatibility.
-   */
   async ack(job, cleanup = false) {
-    // Only remove from the processing sorted set. Never delete data here.
-    await this.redis.zrem(KEYS.processing, job.id);
+  await this.redis
+    .pipeline()
+    .zrem(KEYS.processing, job.id)
+    .hset(KEYS.meta(job.id), 'status', job.status)
+    .set(KEYS.data(job.id), job.serialize())
+    .exec();
   }
 
   // ─── Status ───────────────────────────────────────────────────────────────
@@ -365,17 +368,12 @@ class Queue {
     return { queued, delayed, processing, dead, completed, failed, totalEver, byType };
   }
 
-  /**
-   * FIX: getRecentJobs now filters out nulls so the jobs table never shows
-   * empty rows, and because we no longer delete data on ack, completed jobs
-   * will properly appear with status=completed.
-   */
   async getRecentJobs(limit = 20) {
     const ids  = await this.redis.lrange(KEYS.recentJobs, 0, limit - 1);
     const jobs = [];
     for (const id of ids) {
       const job = await this.getJob(id);
-      if (job) jobs.push(job);   // null-safe: skip purged/cancelled jobs
+      if (job) jobs.push(job);   
     }
     return jobs;
   }
@@ -384,8 +382,6 @@ class Queue {
 
   async connect() {
     await this.redis.connect();
-    // Reset all counters to 0 on every server start so the dashboard
-    // always shows clean state (completed, failed, totalEver start fresh).
     await this.redis.del(KEYS.counters);
   }
 

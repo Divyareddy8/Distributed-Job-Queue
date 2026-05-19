@@ -72,9 +72,7 @@ class Worker {
 
     try {
       await handler(job.payload);
-
-      // FIX: setStatus(COMPLETED) writes the completed state to Redis,
-      // then ack() ONLY removes from the processing set (no data deletion).
+      await sleep(1000);
       await this.queue.setStatus(job, Status.COMPLETED);
       await this.queue.ack(job);           // ← no cleanup=true anymore
       await this.queue.incrementCounter('completed');
