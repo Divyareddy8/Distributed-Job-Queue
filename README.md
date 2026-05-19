@@ -221,6 +221,7 @@ kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/late
 │   ├── 05-hpa.yaml          HPA for all deployments
 │   └── 06-ingress.yaml      Nginx Ingress (with SSE annotations)
 ├── Dockerfile
+├── .dockerignore
 ├── docker-compose.yml
 ├── index.js                 Local demo / smoke-test
 └── package.json

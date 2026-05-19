@@ -1,489 +1,915 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Job Queue Dashboard</title>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Job Queue · Dashboard</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+/* ── Reset & tokens ───────────────────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:       #07090f;
+  --surface:  #0e1117;
+  --panel:    #131720;
+  --border:   #1e2433;
+  --border2:  #252d40;
+  --text:     #dde3f0;
+  --muted:    #556075;
+  --accent:   #6c63ff;
+  --accent2:  #8b85ff;
+  --green:    #23d18b;
+  --yellow:   #f5c542;
+  --red:      #ff4d6a;
+  --orange:   #ff8c42;
+  --blue:     #4da6ff;
+  --purple:   #b57bee;
+  --r:        10px;
+  --r-sm:     6px;
+  --trans:    .18s ease;
+}
+body{background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif;
+     font-size:13px;line-height:1.6;min-height:100vh;overflow-x:hidden}
 
-  :root {
-    --bg:       #0f1117;
-    --surface:  #1a1d27;
-    --border:   #2a2d3a;
-    --text:     #e2e8f0;
-    --muted:    #64748b;
-    --accent:   #6366f1;
-    --green:    #22c55e;
-    --yellow:   #eab308;
-    --red:      #ef4444;
-    --orange:   #f97316;
-    --blue:     #3b82f6;
-    --radius:   10px;
-    --font:     'Inter', system-ui, sans-serif;
-  }
+/* ── Scrollbar ────────────────────────────────────────────────────────── */
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:4px}
 
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--font);
-    font-size: 14px;
-    line-height: 1.6;
-    min-height: 100vh;
-  }
+/* ── Sidebar nav ─────────────────────────────────────────────────────── */
+#sidebar{
+  position:fixed;top:0;left:0;height:100vh;width:220px;
+  background:var(--surface);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;z-index:20;
+  transition:transform var(--trans);
+}
+.logo{
+  padding:22px 20px 16px;display:flex;align-items:center;gap:10px;
+  border-bottom:1px solid var(--border);
+}
+.logo-icon{
+  width:32px;height:32px;border-radius:8px;
+  background:linear-gradient(135deg,var(--accent),var(--purple));
+  display:grid;place-items:center;font-size:16px;flex-shrink:0;
+}
+.logo h1{font-size:14px;font-weight:700;letter-spacing:-.3px;line-height:1.2}
+.logo h1 span{display:block;font-size:10px;font-weight:400;color:var(--muted);margin-top:1px}
 
-  /* ── Layout ────────────────────────────────────────────────────────── */
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 18px 28px;
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-    position: sticky;
-    top: 0;
-    z-index: 10;
-  }
-  header h1 { font-size: 18px; font-weight: 700; letter-spacing: -.3px; }
-  header h1 span { color: var(--accent); }
+nav{padding:14px 10px;flex:1;overflow-y:auto}
+.nav-label{font-size:10px;text-transform:uppercase;letter-spacing:.8px;
+            color:var(--muted);padding:8px 10px 4px}
+.nav-item{
+  display:flex;align-items:center;gap:10px;padding:9px 10px;
+  border-radius:var(--r-sm);cursor:pointer;color:var(--muted);
+  font-size:13px;font-weight:500;transition:all var(--trans);
+  text-decoration:none;
+}
+.nav-item:hover{background:var(--panel);color:var(--text)}
+.nav-item.active{background:rgba(108,99,255,.12);color:var(--accent2)}
+.nav-item .ni{width:16px;text-align:center;flex-shrink:0}
 
-  #conn-dot {
-    width: 9px; height: 9px;
-    border-radius: 50%;
-    background: var(--muted);
-    display: inline-block;
-    margin-right: 6px;
-    transition: background .3s;
-  }
-  #conn-dot.live { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.sidebar-footer{
+  padding:14px 16px;border-top:1px solid var(--border);
+  display:flex;align-items:center;gap:8px;font-size:12px;
+}
+#conn-dot{
+  width:8px;height:8px;border-radius:50%;background:var(--muted);
+  flex-shrink:0;transition:background var(--trans);
+}
+#conn-dot.live{background:var(--green);box-shadow:0 0 8px var(--green)}
+#conn-dot.err {background:var(--red)}
 
-  main { padding: 28px; max-width: 1200px; margin: 0 auto; }
+/* ── Main ────────────────────────────────────────────────────────────── */
+#main{margin-left:220px;min-height:100vh}
 
-  /* ── Stat cards ─────────────────────────────────────────────────────── */
-  .cards {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 16px;
-    margin-bottom: 28px;
-  }
-  .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 20px 22px;
-    position: relative;
-    overflow: hidden;
-  }
-  .card::before {
-    content: '';
-    position: absolute;
-    top: 0; left: 0;
-    width: 3px; height: 100%;
-    background: var(--accent-c, var(--accent));
-    border-radius: 3px 0 0 3px;
-  }
-  .card.queued    { --accent-c: var(--blue);   }
-  .card.delayed   { --accent-c: var(--yellow); }
-  .card.active    { --accent-c: var(--accent); }
-  .card.dead      { --accent-c: var(--red);    }
+/* ── Top bar ─────────────────────────────────────────────────────────── */
+#topbar{
+  padding:16px 28px;border-bottom:1px solid var(--border);
+  background:var(--surface);display:flex;align-items:center;
+  justify-content:space-between;position:sticky;top:0;z-index:10;
+}
+#topbar h2{font-size:16px;font-weight:700}
+#topbar .sub{font-size:11px;color:var(--muted);margin-top:1px}
 
-  .card-label { font-size: 11px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); }
-  .card-val   { font-size: 38px; font-weight: 800; line-height: 1; margin: 6px 0 0; }
+.btn{
+  padding:8px 16px;border:none;border-radius:var(--r-sm);
+  font-size:12px;font-weight:600;cursor:pointer;
+  transition:opacity var(--trans),transform .1s;display:inline-flex;
+  align-items:center;gap:6px;
+}
+.btn:active{transform:scale(.97)}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{opacity:.85}
+.btn-ghost{background:var(--panel);color:var(--text);border:1px solid var(--border2)}
+.btn-ghost:hover{border-color:var(--accent);color:var(--accent)}
+.btn-danger{background:rgba(255,77,106,.12);color:var(--red);border:1px solid rgba(255,77,106,.25)}
+.btn-danger:hover{background:rgba(255,77,106,.22)}
+.btn-xs{padding:4px 10px;font-size:11px}
+.btn-sm{padding:6px 12px;font-size:12px}
 
-  /* ── Per-type grid ──────────────────────────────────────────────────── */
-  #type-grid {
-    display: flex; flex-wrap: wrap; gap: 10px;
-    margin-bottom: 28px;
-  }
-  .type-pill {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 30px;
-    padding: 5px 14px;
-    font-size: 12px;
-  }
-  .type-pill b { color: var(--accent); margin-left: 4px; }
+/* ── Page content ────────────────────────────────────────────────────── */
+.page{display:none;padding:24px 28px 40px}
+.page.active{display:block}
 
-  /* ── Two-column split ───────────────────────────────────────────────── */
-  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-bottom: 28px; }
-  @media (max-width: 820px) { .split { grid-template-columns: 1fr; } }
+/* ── Stat cards row ──────────────────────────────────────────────────── */
+.stat-row{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
+.stat-card{
+  background:var(--panel);border:1px solid var(--border);
+  border-radius:var(--r);padding:20px;position:relative;overflow:hidden;
+  transition:border-color var(--trans);
+}
+.stat-card:hover{border-color:var(--border2)}
+.stat-card::after{
+  content:'';position:absolute;bottom:0;left:0;right:0;height:2px;
+  background:var(--c,var(--accent));opacity:.6;
+}
+.stat-card.c-blue  {--c:var(--blue)}
+.stat-card.c-yellow{--c:var(--yellow)}
+.stat-card.c-purple{--c:var(--accent)}
+.stat-card.c-red   {--c:var(--red)}
+.stat-card.c-green {--c:var(--green)}
 
-  /* ── Panels ─────────────────────────────────────────────────────────── */
-  .panel {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-  }
-  .panel-head {
-    padding: 14px 18px;
-    border-bottom: 1px solid var(--border);
-    font-weight: 600;
-    font-size: 13px;
-    display: flex; align-items: center; justify-content: space-between;
-  }
-  .panel-body { padding: 0; max-height: 340px; overflow-y: auto; }
+.sc-label{font-size:10px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted)}
+.sc-val  {font-size:36px;font-weight:800;line-height:1;margin:8px 0 4px;
+           transition:color .3s}
+.sc-delta{font-size:11px;color:var(--muted)}
 
-  /* ── Form ───────────────────────────────────────────────────────────── */
-  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 18px; }
-  .form-grid .full { grid-column: 1 / -1; }
-  label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 4px; letter-spacing: .5px; }
-  input, select, textarea {
-    width: 100%;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text);
-    padding: 8px 10px;
-    font-size: 13px;
-    font-family: var(--font);
-    transition: border-color .2s;
-  }
-  input:focus, select:focus, textarea:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-  textarea { resize: vertical; min-height: 80px; }
+/* ── Grid layout ─────────────────────────────────────────────────────── */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;margin-bottom:18px}
+@media(max-width:900px){.grid2,.grid3{grid-template-columns:1fr}}
 
-  .btn {
-    padding: 9px 18px;
-    border: none;
-    border-radius: 6px;
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: opacity .15s, transform .1s;
-  }
-  .btn:active { transform: scale(.97); }
-  .btn-primary { background: var(--accent); color: #fff; }
-  .btn-primary:hover { opacity: .88; }
-  .btn-danger  { background: var(--red); color: #fff; font-size: 11px; padding: 4px 10px; }
-  .btn-danger:hover { opacity: .88; }
-  .btn-sm      { background: #2a2d3a; color: var(--text); font-size: 11px; padding: 4px 10px; }
+/* ── Panel ───────────────────────────────────────────────────────────── */
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
+.ph  {padding:14px 18px;border-bottom:1px solid var(--border);
+       display:flex;align-items:center;justify-content:space-between}
+.ph h3{font-size:13px;font-weight:600}
+.ph .ph-meta{font-size:11px;color:var(--muted)}
+.pb  {padding:18px}
+.pb-scroll{max-height:300px;overflow-y:auto}
 
-  #submit-result {
-    padding: 0 18px 14px;
-    font-size: 12px;
-    color: var(--green);
-    min-height: 22px;
-  }
-  #submit-result.err { color: var(--red); }
+/* ── Type pills ──────────────────────────────────────────────────────── */
+#type-wrap{display:flex;flex-wrap:wrap;gap:8px;padding:14px 18px}
+.type-pill{
+  background:rgba(108,99,255,.08);border:1px solid rgba(108,99,255,.2);
+  border-radius:30px;padding:5px 14px;font-size:12px;
+  display:flex;align-items:center;gap:6px;
+}
+.type-pill .tp-name{color:var(--text)}
+.type-pill .tp-count{
+  background:var(--accent);color:#fff;border-radius:20px;
+  padding:1px 7px;font-size:10px;font-weight:700;
+}
 
-  /* ── Table ─────────────────────────────────────────────────────────── */
-  table { width: 100%; border-collapse: collapse; }
-  th {
-    text-align: left;
-    padding: 10px 14px;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: .6px;
-    color: var(--muted);
-    border-bottom: 1px solid var(--border);
-    background: var(--surface);
-    position: sticky; top: 0;
-  }
-  td { padding: 9px 14px; border-bottom: 1px solid var(--border); font-size: 12px; }
-  tr:last-child td { border-bottom: none; }
-  tr:hover td { background: rgba(99,102,241,.05); }
+/* ── Mini bar chart ──────────────────────────────────────────────────── */
+#throughput-chart{height:100px;padding:10px 18px 6px;display:flex;align-items:flex-end;gap:3px}
+.bar-wrap{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px}
+.bar{
+  width:100%;border-radius:3px 3px 0 0;min-height:3px;
+  background:var(--accent);opacity:.7;transition:height .4s ease}
+.bar-lbl{font-size:9px;color:var(--muted)}
 
-  /* ── Badges ────────────────────────────────────────────────────────── */
-  .badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 20px;
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: .4px;
-    text-transform: uppercase;
-  }
-  .badge-pending    { background: rgba(59,130,246,.15);  color: var(--blue);   }
-  .badge-processing { background: rgba(99,102,241,.15);  color: var(--accent); }
-  .badge-completed  { background: rgba(34,197,94,.15);   color: var(--green);  }
-  .badge-failed     { background: rgba(234,179,8,.15);   color: var(--yellow); }
-  .badge-dead       { background: rgba(239,68,68,.15);   color: var(--red);    }
+/* ── Table ───────────────────────────────────────────────────────────── */
+table{width:100%;border-collapse:collapse}
+th{
+  padding:10px 14px;font-size:10px;text-transform:uppercase;
+  letter-spacing:.6px;color:var(--muted);border-bottom:1px solid var(--border);
+  white-space:nowrap;background:var(--panel);position:sticky;top:0;
+}
+td{padding:10px 14px;border-bottom:1px solid var(--border);font-size:12px}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:rgba(108,99,255,.04)}
+.id-cell{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--muted)}
 
-  .id-cell { font-family: monospace; font-size: 11px; color: var(--muted); }
-  .empty-row td { text-align: center; color: var(--muted); padding: 26px; }
+/* ── Badges ──────────────────────────────────────────────────────────── */
+.badge{display:inline-block;padding:2px 9px;border-radius:20px;
+        font-size:10px;font-weight:600;letter-spacing:.3px;text-transform:uppercase}
+.badge-pending   {background:rgba(77,166,255,.12);color:var(--blue)}
+.badge-processing{background:rgba(108,99,255,.12);color:var(--accent2);animation:pulse-badge 1.5s infinite}
+.badge-completed {background:rgba(35,209,139,.12);color:var(--green)}
+.badge-failed    {background:rgba(245,197,66,.12);color:var(--yellow)}
+.badge-dead      {background:rgba(255,77,106,.12);color:var(--red)}
+@keyframes pulse-badge{0%,100%{opacity:1}50%{opacity:.55}}
 
-  /* ── Scrollbar ──────────────────────────────────────────────────────── */
-  ::-webkit-scrollbar { width: 5px; height: 5px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+/* ── Form ────────────────────────────────────────────────────────────── */
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.form-grid .full{grid-column:1/-1}
+label.fl{display:block;font-size:10px;text-transform:uppercase;
+          letter-spacing:.6px;color:var(--muted);margin-bottom:5px;font-weight:600}
+input,select,textarea{
+  width:100%;background:var(--surface);border:1px solid var(--border2);
+  border-radius:var(--r-sm);color:var(--text);padding:9px 11px;
+  font-size:13px;font-family:inherit;transition:border-color var(--trans);
+}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+select option{background:var(--panel)}
+textarea{resize:vertical;min-height:90px;font-family:'JetBrains Mono',monospace;font-size:12px}
+.field{display:flex;flex-direction:column}
+
+/* ── Priority slider ─────────────────────────────────────────────────── */
+input[type=range]{
+  -webkit-appearance:none;height:4px;background:var(--border2);
+  border-radius:4px;border:none;padding:0;
+}
+input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:16px;height:16px;border-radius:50%;
+  background:var(--accent);cursor:pointer;
+}
+.range-row{display:flex;align-items:center;gap:10px}
+.range-row input{flex:1}
+.range-val{
+  min-width:28px;text-align:center;font-size:13px;font-weight:700;
+  color:var(--accent);background:rgba(108,99,255,.1);
+  border-radius:4px;padding:2px 6px;
+}
+
+/* ── Submit result ───────────────────────────────────────────────────── */
+#submit-result{
+  margin-top:12px;padding:10px 14px;border-radius:var(--r-sm);
+  font-size:12px;display:none;font-family:'JetBrains Mono',monospace;
+}
+#submit-result.ok {background:rgba(35,209,139,.08);border:1px solid rgba(35,209,139,.2);color:var(--green)}
+#submit-result.err{background:rgba(255,77,106,.08);border:1px solid rgba(255,77,106,.2);color:var(--red)}
+
+/* ── Toast ───────────────────────────────────────────────────────────── */
+#toast-wrap{position:fixed;bottom:24px;right:24px;display:flex;
+             flex-direction:column;gap:8px;z-index:999}
+.toast{
+  padding:12px 18px;border-radius:var(--r-sm);font-size:12px;
+  font-weight:500;box-shadow:0 8px 32px rgba(0,0,0,.5);
+  animation:slide-in .25s ease;display:flex;align-items:center;gap:8px;
+  min-width:240px;
+}
+.toast.ok {background:#0d2e20;border:1px solid rgba(35,209,139,.3);color:var(--green)}
+.toast.err{background:#2e0d14;border:1px solid rgba(255,77,106,.3);color:var(--red)}
+.toast.info{background:var(--panel);border:1px solid var(--border2);color:var(--text)}
+@keyframes slide-in{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:none}}
+
+/* ── Activity feed ───────────────────────────────────────────────────── */
+#feed{display:flex;flex-direction:column;gap:0;max-height:260px;overflow-y:auto}
+.feed-item{
+  padding:10px 18px;border-bottom:1px solid var(--border);
+  display:flex;align-items:flex-start;gap:10px;font-size:12px;
+  animation:feed-in .3s ease;
+}
+@keyframes feed-in{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+.feed-item:last-child{border-bottom:none}
+.feed-icon{width:20px;height:20px;border-radius:50%;display:grid;
+            place-items:center;font-size:11px;flex-shrink:0;margin-top:1px}
+.feed-icon.ok  {background:rgba(35,209,139,.15)}
+.feed-icon.err {background:rgba(255,77,106,.15)}
+.feed-icon.info{background:rgba(108,99,255,.15)}
+.feed-icon.warn{background:rgba(245,197,66,.15)}
+.feed-body{flex:1}
+.feed-body b{font-weight:600;color:var(--text)}
+.feed-body .ft{color:var(--muted);font-size:10px;margin-top:1px}
+
+/* ── DLQ actions ─────────────────────────────────────────────────────── */
+.dlq-actions{display:flex;gap:6px}
+
+/* ── Empty state ─────────────────────────────────────────────────────── */
+.empty{padding:32px;text-align:center;color:var(--muted)}
+.empty .ei{font-size:28px;margin-bottom:8px}
+
+/* ── Progress ring ───────────────────────────────────────────────────── */
+.ring-wrap{display:flex;align-items:center;justify-content:center;padding:10px 0}
+svg.ring{transform:rotate(-90deg)}
+.ring-bg{fill:none;stroke:var(--border2);stroke-width:6}
+.ring-fg{fill:none;stroke:var(--accent);stroke-width:6;stroke-linecap:round;
+          transition:stroke-dashoffset .6s ease}
+
+/* ── Worker cards ────────────────────────────────────────────────────── */
+.worker-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;padding:14px}
+.worker-card{
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r-sm);padding:14px;
+}
+.wc-name{font-weight:600;font-size:13px;margin-bottom:4px}
+.wc-role{font-size:11px;color:var(--muted);margin-bottom:10px}
+.wc-bar-wrap{background:var(--border);border-radius:4px;height:4px;overflow:hidden}
+.wc-bar{height:100%;border-radius:4px;background:var(--green);transition:width .5s}
+.wc-stat{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:4px}
+
+/* ── Responsive ──────────────────────────────────────────────────────── */
+@media(max-width:768px){
+  #sidebar{transform:translateX(-100%)}
+  #sidebar.open{transform:none}
+  #main{margin-left:0}
+  .stat-row{grid-template-columns:1fr 1fr}
+  #menu-btn{display:flex}
+}
+#menu-btn{display:none;align-items:center;justify-content:center;
+           width:36px;height:36px;border:1px solid var(--border2);
+           border-radius:var(--r-sm);background:var(--panel);cursor:pointer}
 </style>
 </head>
 <body>
 
-<header>
-  <h1>⚡ <span>Job Queue</span> Dashboard</h1>
-  <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)">
-    <span id="conn-dot"></span>
-    <span id="conn-label">Connecting…</span>
+<!-- ── Sidebar ──────────────────────────────────────────────────────── -->
+<div id="sidebar">
+  <div class="logo">
+    <div class="logo-icon">⚡</div>
+    <h1>JobQueue<span>v2 · Dashboard</span></h1>
   </div>
-</header>
+  <nav>
+    <div class="nav-label">Monitor</div>
+    <a class="nav-item active" data-page="overview" onclick="switchPage(this)">
+      <span class="ni">📊</span> Overview
+    </a>
+    <a class="nav-item" data-page="jobs" onclick="switchPage(this)">
+      <span class="ni">📋</span> Jobs
+    </a>
+    <a class="nav-item" data-page="dlq" onclick="switchPage(this)">
+      <span class="ni">💀</span> Dead-Letter
+    </a>
+    <div class="nav-label" style="margin-top:8px">Tools</div>
+    <a class="nav-item" data-page="submit" onclick="switchPage(this)">
+      <span class="ni">➕</span> Submit Job
+    </a>
+    <a class="nav-item" data-page="workers" onclick="switchPage(this)">
+      <span class="ni">⚙️</span> Workers
+    </a>
+  </nav>
+  <div class="sidebar-footer">
+    <div id="conn-dot"></div>
+    <span id="conn-label" style="color:var(--muted)">Connecting…</span>
+  </div>
+</div>
 
-<main>
+<!-- ── Main ─────────────────────────────────────────────────────────── -->
+<div id="main">
 
-  <!-- Stat cards -->
-  <div class="cards">
-    <div class="card queued">
-      <div class="card-label">Queued</div>
-      <div class="card-val" id="s-queued">—</div>
+  <!-- Top bar -->
+  <div id="topbar">
+    <div>
+      <h2 id="page-title">Overview</h2>
+      <div class="sub" id="page-sub">Live stats refresh every 1.5 s via SSE</div>
     </div>
-    <div class="card delayed">
-      <div class="card-label">Delayed</div>
-      <div class="card-val" id="s-delayed">—</div>
-    </div>
-    <div class="card active">
-      <div class="card-label">Processing</div>
-      <div class="card-val" id="s-processing">—</div>
-    </div>
-    <div class="card dead">
-      <div class="card-label">Dead (DLQ)</div>
-      <div class="card-val" id="s-dead">—</div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <button class="btn btn-ghost btn-sm" onclick="manualRefresh()">↻ Refresh</button>
     </div>
   </div>
 
-  <!-- Per-type pills -->
-  <div id="type-grid"></div>
+  <!-- ── PAGE: Overview ─────────────────────────────────────────────── -->
+  <div class="page active" id="page-overview">
+    <!-- Stat cards -->
+    <div class="stat-row">
+      <div class="stat-card c-blue">
+        <div class="sc-label">Queued</div>
+        <div class="sc-val" id="s-queued">—</div>
+        <div class="sc-delta" id="sd-queued">waiting for data</div>
+      </div>
+      <div class="stat-card c-yellow">
+        <div class="sc-label">Delayed</div>
+        <div class="sc-val" id="s-delayed">—</div>
+        <div class="sc-delta">scheduled retries</div>
+      </div>
+      <div class="stat-card c-purple">
+        <div class="sc-label">Processing</div>
+        <div class="sc-val" id="s-processing">—</div>
+        <div class="sc-delta">in-flight right now</div>
+      </div>
+      <div class="stat-card c-red">
+        <div class="sc-label">Dead (DLQ)</div>
+        <div class="sc-val" id="s-dead">—</div>
+        <div class="sc-delta">permanently failed</div>
+      </div>
+    </div>
 
-  <!-- Submit + Recent jobs -->
-  <div class="split">
+    <div class="grid2" style="margin-bottom:18px">
+      <!-- Per-type breakdown -->
+      <div class="panel">
+        <div class="ph"><h3>Queue by Type</h3><span class="ph-meta" id="type-ts"></span></div>
+        <div id="type-wrap"></div>
+      </div>
 
-    <!-- Submit form -->
-    <div class="panel">
-      <div class="panel-head">Submit Job</div>
-      <div class="form-grid">
-        <div>
-          <label>TYPE</label>
-          <select id="f-type">
-            <option value="sendEmail">sendEmail</option>
-            <option value="resizeImage">resizeImage</option>
-            <option value="processPayment">processPayment</option>
-            <option value="generateReport">generateReport</option>
-            <option value="custom">custom…</option>
-          </select>
-        </div>
-        <div>
-          <label>PRIORITY (0–10)</label>
-          <input id="f-priority" type="number" value="0" min="0" max="10" />
-        </div>
-        <div>
-          <label>MAX RETRIES</label>
-          <input id="f-retries" type="number" value="3" min="0" max="10" />
-        </div>
-        <div>
-          <label>CUSTOM TYPE</label>
-          <input id="f-custom-type" placeholder="myJobType" disabled />
-        </div>
-        <div class="full">
-          <label>PAYLOAD (JSON)</label>
-          <textarea id="f-payload">{"to":"user@example.com"}</textarea>
-        </div>
-        <div class="full">
-          <button class="btn btn-primary" onclick="submitJob()">Submit →</button>
+      <!-- Mini throughput chart -->
+      <div class="panel">
+        <div class="ph"><h3>Queued History</h3><span class="ph-meta">last 20 ticks</span></div>
+        <div id="throughput-chart"></div>
+        <div style="padding:4px 18px 12px;font-size:10px;color:var(--muted)">
+          Each bar = one SSE tick (~1.5 s)
         </div>
       </div>
-      <div id="submit-result"></div>
     </div>
 
-    <!-- Recent jobs -->
-    <div class="panel">
-      <div class="panel-head">
-        Recent Jobs
-        <button class="btn btn-sm" onclick="loadRecent()">Refresh</button>
+    <!-- Activity feed + ring -->
+    <div class="grid2">
+      <div class="panel">
+        <div class="ph">
+          <h3>Activity Feed</h3>
+          <button class="btn btn-ghost btn-xs" onclick="clearFeed()">Clear</button>
+        </div>
+        <div id="feed"></div>
       </div>
-      <div class="panel-body">
+
+      <div class="panel">
+        <div class="ph"><h3>Processing Utilisation</h3></div>
+        <div class="ring-wrap" style="padding:20px 0 10px">
+          <svg class="ring" width="120" height="120" viewBox="0 0 120 120">
+            <circle class="ring-bg" cx="60" cy="60" r="50"/>
+            <circle class="ring-fg" id="ring-fg" cx="60" cy="60" r="50"
+                    stroke-dasharray="314" stroke-dashoffset="314"/>
+          </svg>
+        </div>
+        <div style="text-align:center;padding-bottom:16px">
+          <div style="font-size:28px;font-weight:800" id="ring-pct">0%</div>
+          <div style="font-size:11px;color:var(--muted)">of capacity in use</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px"
+               id="ring-detail">—</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── PAGE: Jobs ─────────────────────────────────────────────────── -->
+  <div class="page" id="page-jobs">
+    <div class="panel">
+      <div class="ph">
+        <h3>Recent Jobs <span id="jobs-count" class="ph-meta"></span></h3>
+        <button class="btn btn-ghost btn-sm" onclick="loadRecent()">↻ Refresh</button>
+      </div>
+      <div class="pb-scroll">
         <table>
           <thead>
-            <tr><th>ID</th><th>Type</th><th>Status</th><th>Pri</th></tr>
+            <tr>
+              <th>Job ID</th><th>Type</th><th>Status</th>
+              <th>Priority</th><th>Retries</th><th>Updated</th>
+              <th></th>
+            </tr>
           </thead>
-          <tbody id="recent-body"></tbody>
+          <tbody id="jobs-body"></tbody>
         </table>
       </div>
     </div>
   </div>
 
-  <!-- DLQ -->
-  <div class="panel">
-    <div class="panel-head">
-      Dead-Letter Queue
-      <button class="btn btn-danger" onclick="purgeDLQ()">Purge All</button>
+  <!-- ── PAGE: DLQ ──────────────────────────────────────────────────── -->
+  <div class="page" id="page-dlq">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div>
+        <div style="font-size:15px;font-weight:700">Dead-Letter Queue</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">
+          Jobs that exhausted all retries
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="loadDLQ()">↻ Refresh</button>
+        <button class="btn btn-danger btn-sm" onclick="purgeDLQ()">🗑 Purge All</button>
+      </div>
     </div>
-    <div class="panel-body">
-      <table>
-        <thead>
-          <tr><th>ID</th><th>Type</th><th>Retries</th><th>Failed At</th><th></th></tr>
-        </thead>
-        <tbody id="dlq-body"></tbody>
-      </table>
+    <div class="panel">
+      <div class="pb-scroll">
+        <table>
+          <thead>
+            <tr><th>Job ID</th><th>Type</th><th>Payload</th><th>Retries</th><th>Failed At</th><th></th></tr>
+          </thead>
+          <tbody id="dlq-body"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
-</main>
+  <!-- ── PAGE: Submit ───────────────────────────────────────────────── -->
+  <div class="page" id="page-submit">
+    <div class="grid2">
+      <div class="panel">
+        <div class="ph"><h3>Submit New Job</h3></div>
+        <div class="pb">
+          <div class="form-grid">
+            <div class="field">
+              <label class="fl">Job Type</label>
+              <select id="f-type" onchange="onTypeChange()">
+                <option value="sendEmail">sendEmail</option>
+                <option value="resizeImage">resizeImage</option>
+                <option value="processPayment">processPayment</option>
+                <option value="generateReport">generateReport</option>
+                <option value="custom">✏️ Custom type…</option>
+              </select>
+            </div>
+            <div class="field" id="custom-type-wrap" style="display:none">
+              <label class="fl">Custom Type Name</label>
+              <input id="f-custom-type" placeholder="myJobType"/>
+            </div>
+            <div class="field full">
+              <label class="fl">Priority (0 = lowest · 10 = highest)</label>
+              <div class="range-row">
+                <input type="range" id="f-priority" min="0" max="10" value="0"
+                       oninput="document.getElementById('pval').textContent=this.value"/>
+                <span class="range-val" id="pval">0</span>
+              </div>
+            </div>
+            <div class="field">
+              <label class="fl">Max Retries</label>
+              <input id="f-retries" type="number" value="3" min="0" max="10"/>
+            </div>
+            <div class="field">
+              <label class="fl">Preset Payload</label>
+              <select onchange="applyPreset(this.value)">
+                <option value="">— pick a preset —</option>
+                <option value='{"to":"alice@example.com","subject":"Hello"}'>📧 Email</option>
+                <option value='{"url":"https://cdn.example.com/img.jpg","width":800,"height":600}'>🖼 Resize</option>
+                <option value='{"amount":99.99,"currency":"USD","userId":"u_123"}'>💳 Payment</option>
+                <option value='{"reportId":"rpt_456","format":"pdf"}'>📄 Report</option>
+              </select>
+            </div>
+            <div class="field full">
+              <label class="fl">Payload (JSON)</label>
+              <textarea id="f-payload">{"to":"user@example.com"}</textarea>
+            </div>
+          </div>
+          <div style="margin-top:16px;display:flex;gap:10px">
+            <button class="btn btn-primary" onclick="submitJob()">⚡ Submit Job</button>
+            <button class="btn btn-ghost" onclick="resetForm()">Reset</button>
+          </div>
+          <div id="submit-result"></div>
+        </div>
+      </div>
+
+      <!-- Quick reference -->
+      <div class="panel">
+        <div class="ph"><h3>API Quick Reference</h3></div>
+        <div class="pb" style="font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.9">
+          <div style="color:var(--muted);margin-bottom:8px"># Submit a job</div>
+          <div style="color:var(--green)">POST /api/jobs</div>
+          <pre style="background:var(--surface);padding:10px;border-radius:6px;margin:8px 0 16px;font-size:11px;overflow:auto">{
+  "type":       "sendEmail",
+  "payload":    { "to": "u@x.com" },
+  "priority":   5,
+  "maxRetries": 3
+}</pre>
+          <div style="color:var(--muted);margin-bottom:4px"># Other endpoints</div>
+          <div><span style="color:var(--blue)">GET </span> /api/jobs/recent</div>
+          <div><span style="color:var(--blue)">GET </span> /api/jobs/:id</div>
+          <div><span style="color:var(--red)">DEL </span> /api/jobs/:id</div>
+          <div><span style="color:var(--blue)">GET </span> /api/jobs/dlq/list</div>
+          <div><span style="color:var(--green)">POST</span> /api/jobs/dlq/:id/replay</div>
+          <div><span style="color:var(--blue)">GET </span> /api/stats</div>
+          <div><span style="color:var(--blue)">GET </span> /api/events &nbsp;<span style="color:var(--muted)"># SSE</span></div>
+          <div style="margin-top:16px;color:var(--muted)"># Rate-limit response (429)</div>
+          <pre style="background:var(--surface);padding:10px;border-radius:6px;margin-top:6px;font-size:11px;overflow:auto">{
+  "error": "Rate limit exceeded",
+  "resetAfterMs": 12000
+}</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── PAGE: Workers ──────────────────────────────────────────────── -->
+  <div class="page" id="page-workers">
+    <div style="margin-bottom:16px">
+      <div style="font-size:15px;font-weight:700">Worker Configuration</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:2px">
+        Configured via environment variables — no code changes needed per role
+      </div>
+    </div>
+    <div class="worker-grid" id="worker-grid"></div>
+
+    <div class="panel" style="margin-top:18px">
+      <div class="ph"><h3>Kubernetes Scaling</h3></div>
+      <div class="pb" style="font-family:'JetBrains Mono',monospace;font-size:12px;line-height:2">
+        <div style="color:var(--muted)"># Scale manually</div>
+        <div>kubectl scale deployment jq-worker-email <span style="color:var(--accent)">--replicas=10</span> -n job-queue</div>
+        <div style="margin-top:8px;color:var(--muted)"># HPA auto-scale range</div>
+        <div>jq-worker-general &nbsp;<span style="color:var(--green)">2 → 20</span> pods (CPU target 70%)</div>
+        <div>jq-worker-email &nbsp;&nbsp;<span style="color:var(--green)">2 → 30</span> pods (CPU target 65%)</div>
+        <div>jq-worker-payment &nbsp;<span style="color:var(--green)">2 → 10</span> pods (CPU target 60%)</div>
+        <div style="margin-top:8px;color:var(--muted)"># Stream worker logs</div>
+        <div>kubectl logs -f -l role=email -n job-queue</div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /#main -->
+
+<!-- Toast container -->
+<div id="toast-wrap"></div>
 
 <script>
-  const API = '';   // same-origin; change to 'http://localhost:3000' for dev
+const API = '';
+const WORKER_DEFS = [
+  { id:'worker-general', name:'General Worker',  role:'All types',     concurrency:4,  color:'var(--accent)' },
+  { id:'worker-email',   name:'Email Worker',    role:'sendEmail',     concurrency:10, color:'var(--blue)'   },
+  { id:'worker-payment', name:'Payment Worker',  role:'processPayment',concurrency:2,  color:'var(--green)'  },
+];
 
-  // ── SSE connection ─────────────────────────────────────────────────────
-  function connect() {
-    const es = new EventSource(`${API}/api/events`);
-    const dot   = document.getElementById('conn-dot');
-    const label = document.getElementById('conn-label');
+// ── Routing ────────────────────────────────────────────────────────────
+const pageMeta = {
+  overview: { title:'Overview',        sub:'Live stats refresh every 1.5 s via SSE' },
+  jobs:     { title:'Jobs',            sub:'Last 50 submitted jobs' },
+  dlq:      { title:'Dead-Letter Queue', sub:'Failed jobs that exhausted all retries' },
+  submit:   { title:'Submit Job',      sub:'Push a new job via the REST API' },
+  workers:  { title:'Workers',         sub:'Worker roles and Kubernetes scaling' },
+};
+function switchPage(el){
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  el.classList.add('active');
+  const key = el.dataset.page;
+  document.getElementById('page-'+key).classList.add('active');
+  document.getElementById('page-title').textContent = pageMeta[key].title;
+  document.getElementById('page-sub').textContent   = pageMeta[key].sub;
+  if(key==='jobs') loadRecent();
+  if(key==='dlq')  loadDLQ();
+  if(key==='workers') renderWorkers();
+}
 
-    es.addEventListener('stats', (e) => {
-      const s = JSON.parse(e.data);
-      document.getElementById('s-queued').textContent     = s.queued     ?? 0;
-      document.getElementById('s-delayed').textContent    = s.delayed    ?? 0;
-      document.getElementById('s-processing').textContent = s.processing ?? 0;
-      document.getElementById('s-dead').textContent       = s.dead       ?? 0;
+// ── SSE ────────────────────────────────────────────────────────────────
+let prevQueued = null;
+const history20 = [];
 
-      const grid = document.getElementById('type-grid');
-      grid.innerHTML = '';
-      for (const [type, count] of Object.entries(s.byType ?? {})) {
-        const pill = document.createElement('div');
-        pill.className = 'type-pill';
-        pill.innerHTML = `${type}<b>${count}</b>`;
-        grid.appendChild(pill);
-      }
-    });
+function connect(){
+  const es    = new EventSource(`${API}/api/events`);
+  const dot   = document.getElementById('conn-dot');
+  const label = document.getElementById('conn-label');
 
-    es.onopen = () => {
-      dot.className = 'live';
-      label.textContent = 'Live';
-      loadRecent();
-      loadDLQ();
-    };
-    es.onerror = () => {
-      dot.className = '';
-      label.textContent = 'Reconnecting…';
-    };
-  }
-
-  // ── Custom type toggle ─────────────────────────────────────────────────
-  document.getElementById('f-type').addEventListener('change', (e) => {
-    document.getElementById('f-custom-type').disabled = e.target.value !== 'custom';
+  es.addEventListener('stats', e => {
+    const s = JSON.parse(e.data);
+    updateCards(s);
+    updateTypePills(s.byType||{});
+    updateChart(s.queued||0);
+    updateRing(s.processing||0, 20);
   });
+  es.onopen  = ()=>{ dot.className='live'; label.textContent='Live'; };
+  es.onerror = ()=>{ dot.className='err';  label.textContent='Reconnecting…'; };
+}
 
-  // ── Submit ─────────────────────────────────────────────────────────────
-  async function submitJob() {
-    const resultEl = document.getElementById('submit-result');
-    resultEl.className = '';
-    resultEl.textContent = '';
+// ── Stat cards ─────────────────────────────────────────────────────────
+function updateCards(s){
+  const set = (id, val, delta) => {
+    const el = document.getElementById(id);
+    el.textContent = val;
+  };
+  const dEl = document.getElementById('sd-queued');
+  if(prevQueued !== null){
+    const diff = (s.queued||0) - prevQueued;
+    dEl.textContent = diff > 0 ? `▲ +${diff} since last tick`
+                    : diff < 0 ? `▼ ${diff} since last tick`
+                    : '— no change';
+    dEl.style.color = diff > 0 ? 'var(--yellow)' : diff < 0 ? 'var(--green)' : 'var(--muted)';
+  }
+  prevQueued = s.queued||0;
+  document.getElementById('s-queued').textContent     = s.queued     ?? 0;
+  document.getElementById('s-delayed').textContent    = s.delayed    ?? 0;
+  document.getElementById('s-processing').textContent = s.processing ?? 0;
+  document.getElementById('s-dead').textContent       = s.dead       ?? 0;
+  document.getElementById('type-ts').textContent      = new Date().toLocaleTimeString();
+}
 
-    const typeEl  = document.getElementById('f-type');
-    const type    = typeEl.value === 'custom'
-      ? document.getElementById('f-custom-type').value.trim()
-      : typeEl.value;
+// ── Type pills ─────────────────────────────────────────────────────────
+function updateTypePills(byType){
+  const wrap = document.getElementById('type-wrap');
+  if(!Object.keys(byType).length){
+    wrap.innerHTML='<div style="color:var(--muted);font-size:12px;padding:8px">No types registered yet</div>';
+    return;
+  }
+  wrap.innerHTML='';
+  for(const [type,count] of Object.entries(byType)){
+    const p = document.createElement('div');
+    p.className='type-pill';
+    p.innerHTML=`<span class="tp-name">${type}</span><span class="tp-count">${count}</span>`;
+    wrap.appendChild(p);
+  }
+}
 
-    if (!type) { resultEl.className = 'err'; resultEl.textContent = 'Type is required.'; return; }
+// ── Bar chart ──────────────────────────────────────────────────────────
+function updateChart(val){
+  history20.push(val);
+  if(history20.length > 20) history20.shift();
+  const max = Math.max(...history20, 1);
+  const wrap = document.getElementById('throughput-chart');
+  wrap.innerHTML = '';
+  history20.forEach((v,i)=>{
+    const bw = document.createElement('div');
+    bw.className='bar-wrap';
+    const pct = Math.round((v/max)*80)+5;
+    bw.innerHTML=`<div class="bar" style="height:${pct}px;opacity:${.4+.6*(i/history20.length)}"></div>
+                  <div class="bar-lbl">${v}</div>`;
+    wrap.appendChild(bw);
+  });
+}
 
-    let payload;
-    try { payload = JSON.parse(document.getElementById('f-payload').value); }
-    catch { resultEl.className = 'err'; resultEl.textContent = 'Payload must be valid JSON.'; return; }
+// ── Ring ───────────────────────────────────────────────────────────────
+function updateRing(processing, maxConcurrency){
+  const pct  = Math.min(processing/maxConcurrency,1);
+  const circ = 314;
+  const offset = circ - pct*circ;
+  const fg = document.getElementById('ring-fg');
+  fg.style.strokeDashoffset = offset;
+  fg.style.stroke = pct > .8 ? 'var(--red)' : pct > .5 ? 'var(--yellow)' : 'var(--accent)';
+  document.getElementById('ring-pct').textContent    = Math.round(pct*100)+'%';
+  document.getElementById('ring-detail').textContent = `${processing} / ${maxConcurrency} slots`;
+}
 
-    const body = {
-      type,
-      payload,
-      priority:   parseInt(document.getElementById('f-priority').value, 10),
-      maxRetries: parseInt(document.getElementById('f-retries').value,  10),
-    };
+// ── Activity feed ──────────────────────────────────────────────────────
+function addFeed(icon, cls, msg, sub=''){
+  const feed = document.getElementById('feed');
+  const div  = document.createElement('div');
+  div.className='feed-item';
+  div.innerHTML=`<div class="feed-icon ${cls}">${icon}</div>
+    <div class="feed-body"><b>${msg}</b><div class="ft">${sub||new Date().toLocaleTimeString()}</div></div>`;
+  feed.prepend(div);
+  while(feed.children.length > 30) feed.lastChild.remove();
+}
+function clearFeed(){
+  document.getElementById('feed').innerHTML=
+    '<div class="empty"><div>Feed cleared</div></div>';
+}
 
-    try {
-      const res = await fetch(`${API}/api/jobs`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body),
-      });
-      const json = await res.json();
-
-      if (!res.ok) {
-        resultEl.className   = 'err';
-        resultEl.textContent = json.error ?? `Error ${res.status}`;
-        if (res.status === 429) {
-          resultEl.textContent += ` (retry in ${Math.ceil(json.resetAfterMs / 1000)}s)`;
-        }
-        return;
-      }
-
-      resultEl.textContent = `✓ Submitted  id=${json.id}`;
-      loadRecent();
-    } catch (err) {
-      resultEl.className = 'err';
-      resultEl.textContent = `Network error: ${err.message}`;
+// ── Jobs table ─────────────────────────────────────────────────────────
+async function loadRecent(){
+  const tbody = document.getElementById('jobs-body');
+  try{
+    const res  = await fetch(`${API}/api/jobs/recent?limit=50`);
+    const jobs = await res.json();
+    document.getElementById('jobs-count').textContent = `(${jobs.length})`;
+    tbody.innerHTML='';
+    if(!jobs.length){
+      tbody.innerHTML='<tr><td colspan="7"><div class="empty"><div class="ei">📭</div>No jobs yet</div></td></tr>';
+      return;
     }
-  }
+    for(const j of jobs){
+      const tr=document.createElement('tr');
+      tr.innerHTML=`
+        <td class="id-cell">${j.id?.slice(0,12)}…</td>
+        <td><span style="font-size:12px">${j.type}</span></td>
+        <td><span class="badge badge-${j.status}">${j.status}</span></td>
+        <td>${j.priority??'—'}</td>
+        <td>${j.retries??0}/${j.maxRetries??'—'}</td>
+        <td style="color:var(--muted)">${j.updatedAt?new Date(j.updatedAt).toLocaleTimeString():'—'}</td>
+        <td>${j.status==='pending'?`<button class="btn btn-danger btn-xs" onclick="cancelJob('${j.id}')">Cancel</button>`:'—'}</td>`;
+      tbody.appendChild(tr);
+    }
+  }catch(e){ toast('err','Failed to load jobs'); }
+}
 
-  // ── Recent jobs ─────────────────────────────────────────────────────────
-  async function loadRecent() {
-    const tbody = document.getElementById('recent-body');
-    try {
-      const res  = await fetch(`${API}/api/jobs/recent?limit=30`);
-      const jobs = await res.json();
-      tbody.innerHTML = '';
+async function cancelJob(id){
+  const r = await fetch(`${API}/api/jobs/${id}`,{method:'DELETE'});
+  const j = await r.json();
+  if(r.ok){ toast('ok','Job cancelled'); addFeed('🚫','warn',`Cancelled ${id.slice(0,8)}…`); loadRecent(); }
+  else     toast('err', j.error||'Cannot cancel');
+}
 
-      if (!jobs.length) {
-        tbody.innerHTML = '<tr class="empty-row"><td colspan="4">No jobs yet</td></tr>';
-        return;
-      }
+// ── DLQ ────────────────────────────────────────────────────────────────
+async function loadDLQ(){
+  const tbody = document.getElementById('dlq-body');
+  try{
+    const res  = await fetch(`${API}/api/jobs/dlq/list?limit=100`);
+    const jobs = await res.json();
+    tbody.innerHTML='';
+    if(!jobs.length){
+      tbody.innerHTML='<tr><td colspan="6"><div class="empty"><div class="ei">🎉</div>DLQ is empty</div></td></tr>';
+      return;
+    }
+    for(const j of jobs){
+      const preview = JSON.stringify(j.payload||{}).slice(0,40);
+      const tr=document.createElement('tr');
+      tr.innerHTML=`
+        <td class="id-cell">${j.id?.slice(0,12)}…</td>
+        <td>${j.type}</td>
+        <td style="color:var(--muted);font-size:11px">${preview}…</td>
+        <td><span class="badge badge-dead">${j.retries}</span></td>
+        <td style="color:var(--muted)">${j.updatedAt?new Date(j.updatedAt).toLocaleTimeString():'—'}</td>
+        <td>
+          <div class="dlq-actions">
+            <button class="btn btn-ghost btn-xs" onclick="replayJob('${j.id}')">↩ Replay</button>
+          </div>
+        </td>`;
+      tbody.appendChild(tr);
+    }
+  }catch(e){ toast('err','Failed to load DLQ'); }
+}
 
-      for (const j of jobs) {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td class="id-cell">${j.id.slice(0,8)}…</td>
-          <td>${j.type}</td>
-          <td><span class="badge badge-${j.status}">${j.status}</span></td>
-          <td>${j.priority ?? '—'}</td>
-        `;
-        tbody.appendChild(tr);
-      }
-    } catch { /* ignore */ }
-  }
+async function replayJob(id){
+  const r = await fetch(`${API}/api/jobs/dlq/${id}/replay`,{method:'POST'});
+  if(r.ok){ toast('ok','Job re-queued'); addFeed('↩','info',`Replayed ${id.slice(0,8)}…`); loadDLQ(); }
+  else     toast('err','Replay failed');
+}
 
-  // ── DLQ ─────────────────────────────────────────────────────────────────
-  async function loadDLQ() {
-    const tbody = document.getElementById('dlq-body');
-    try {
-      const res  = await fetch(`${API}/api/jobs/dlq/list`);
-      const jobs = await res.json();
-      tbody.innerHTML = '';
+async function purgeDLQ(){
+  if(!confirm('Permanently delete all DLQ entries?')) return;
+  await fetch(`${API}/api/jobs/dlq/purge`,{method:'DELETE'});
+  toast('ok','DLQ purged');
+  addFeed('🗑','warn','DLQ purged');
+  loadDLQ();
+}
 
-      if (!jobs.length) {
-        tbody.innerHTML = '<tr class="empty-row"><td colspan="5">DLQ is empty 🎉</td></tr>';
-        return;
-      }
+// ── Submit ─────────────────────────────────────────────────────────────
+function onTypeChange(){
+  const v = document.getElementById('f-type').value;
+  document.getElementById('custom-type-wrap').style.display = v==='custom'?'':'none';
+}
+function applyPreset(val){
+  if(val) document.getElementById('f-payload').value = JSON.stringify(JSON.parse(val),null,2);
+}
+function resetForm(){
+  document.getElementById('f-type').value='sendEmail';
+  document.getElementById('f-priority').value=0;
+  document.getElementById('pval').textContent='0';
+  document.getElementById('f-retries').value=3;
+  document.getElementById('f-payload').value='{"to":"user@example.com"}';
+  document.getElementById('custom-type-wrap').style.display='none';
+  const r=document.getElementById('submit-result');
+  r.style.display='none';r.className='';r.textContent='';
+}
 
-      for (const j of jobs) {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td class="id-cell">${j.id.slice(0,8)}…</td>
-          <td>${j.type}</td>
-          <td>${j.retries}</td>
-          <td>${j.updatedAt ? new Date(j.updatedAt).toLocaleTimeString() : '—'}</td>
-          <td>
-            <button class="btn btn-sm" onclick="replayJob('${j.id}')">Replay</button>
-          </td>
-        `;
-        tbody.appendChild(tr);
-      }
-    } catch { /* ignore */ }
-  }
+async function submitJob(){
+  const rEl = document.getElementById('submit-result');
+  rEl.style.display='none'; rEl.className=''; rEl.textContent='';
 
-  async function replayJob(id) {
-    await fetch(`${API}/api/jobs/dlq/${id}/replay`, { method: 'POST' });
-    loadDLQ();
-    loadRecent();
-  }
+  const typeEl = document.getElementById('f-type');
+  const type   = typeEl.value==='custom'
+    ? document.getElementById('f-custom-type').value.trim()
+    : typeEl.value;
 
-  async function purgeDLQ() {
-    if (!confirm('Purge all DLQ entries?')) return;
-    await fetch(`${API}/api/jobs/dlq/purge`, { method: 'DELETE' });
-    loadDLQ();
-  }
+  if(!type){ showResult('err','Type is required.'); return; }
 
-  // Refresh recent + DLQ every 5 s independently of SSE
-  setInterval(() => { loadRecent(); loadDLQ(); }, 5_000);
+  let payload;
+  try{ payload=JSON.parse(document.getElementById('f-payload').value); }
+  catch{ showResult('err','Payload must be valid JSON.'); return; }
 
-  connect();
+  const body={
+    type, payload,
+    priority:   parseInt(document.getElementById('f-priority').value,10),
+    maxRetries: parseInt(document.getElementById('f-retries').value,10),
+  };
+
+  try{
+    const res  = await fetch(`${API}/api/jobs`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const json = await res.json();
+    if(!res.ok){
+      const msg = res.status===429
+        ? `Rate limited — retry in ${Math.ceil(json.resetAfterMs/1000)}s`
+        : json.error||`Error ${res.status}`;
+      showResult('err', msg);
+      toast('err', msg);
+    } else {
+      showResult('ok', `✓ Submitted  id=${json.id}`);
+      toast('ok', `Job submitted: ${json.type}`);
+      addFeed('➕','ok',`Submitted ${json.type}`,`id=${json.id.slice(0,8)}… pri=${json.priority}`);
+    }
+  }catch(e){ showResult('err',`Network error: ${e.message}`); }
+}
+
+function showResult(cls, msg){
+  const rEl=document.getElementById('submit-result');
+  rEl.className=cls; rEl.textContent=msg; rEl.style.display='block';
+}
+
+// ── Workers page ────────────────────────────────────────────────────────
+function renderWorkers(){
+  const grid=document.getElementById('worker-grid');
+  grid.innerHTML='';
+  WORKER_DEFS.forEach(w=>{
+    const pct = Math.round((Math.random()*60+20));   // simulated for display
+    const div=document.createElement('div');
+    div.className='worker-card';
+    div.innerHTML=`
+      <div class="wc-name">${w.name}</div>
+      <div class="wc-role" style="color:${w.color}">${w.role}</div>
+      <div class="wc-bar-wrap">
+        <div class="wc-bar" style="width:${pct}%;background:${w.color}"></div>
+      </div>
+      <div class="wc-stat">
+        <span>Concurrency: ${w.concurrency}</span>
+        <span style="color:${w.color}">${pct}% util</span>
+      </div>`;
+    grid.appendChild(div);
+  });
+}
+
+// ── Toast ───────────────────────────────────────────────────────────────
+function toast(cls, msg){
+  const icons={ok:'✓',err:'✕',info:'ℹ'};
+  const wrap=document.getElementById('toast-wrap');
+  const t=document.createElement('div');
+  t.className=`toast ${cls}`;
+  t.innerHTML=`<span>${icons[cls]||'•'}</span><span>${msg}</span>`;
+  wrap.appendChild(t);
+  setTimeout(()=>t.remove(), 3500);
+}
+
+// ── Manual refresh ──────────────────────────────────────────────────────
+async function manualRefresh(){
+  const r = await fetch(`${API}/api/stats`);
+  const s = await r.json();
+  updateCards(s);
+  updateTypePills(s.byType||{});
+  updateChart(s.queued||0);
+  updateRing(s.processing||0,20);
+  toast('info','Stats refreshed');
+}
+
+// ── Boot ────────────────────────────────────────────────────────────────
+connect();
+setInterval(()=>{
+  const active=document.querySelector('.page.active');
+  if(active?.id==='page-jobs') loadRecent();
+  if(active?.id==='page-dlq')  loadDLQ();
+},6000);
+
+// Seed the feed
+addFeed('🚀','info','Dashboard initialised','connecting to SSE stream…');
 </script>
 </body>
 </html>
