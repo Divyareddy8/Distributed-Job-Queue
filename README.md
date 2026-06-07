@@ -1,4 +1,4 @@
-# Distributed Job Queue v2
+# Distributed Job Queue 
 
 A production-grade, Redis-backed job queue with a REST API, live dashboard, specialised multi-workers, per-type rate limiting, priority queues, and full Kubernetes support.
 
